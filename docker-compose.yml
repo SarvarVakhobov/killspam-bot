@@ -1,0 +1,36 @@
+# killspam-bot — Docker deploy.
+# Postgres host portini OCHMAYDI: 5432 ni testora-postgres-1 egallagan,
+# bot esa bazaga ichki tarmoq orqali "db" nomi bilan ulanadi.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: killspam-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: spam
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD .env da bo'lishi shart}
+      POSTGRES_DB: spam_bot_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spam -d spam_bot_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  bot:
+    build: .
+    image: killspam-bot:local
+    container_name: killspam-bot
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  pgdata:

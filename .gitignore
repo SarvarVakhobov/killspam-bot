@@ -13,3 +13,6 @@ build/
 # Secrets — all env variants (never commit real values)
 .env.*
 !.env.example
+
+# Ish vaqtidagi loglar — ichida foydalanuvchi ID va xabar matnlari bo'ladi
+logs/
