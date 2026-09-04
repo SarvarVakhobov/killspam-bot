@@ -5,6 +5,7 @@ import logging
 from aiohttp import web
 
 from .core import crypto, keys, tokens
+from .core.config import GEMINI_MODEL
 from .core.ratelimit import RateLimiter
 
 try:
@@ -25,7 +26,7 @@ def validate_gemini_key(key: str) -> bool:
     try:
         client = genai.Client(api_key=key)
         client.models.generate_content(
-            model="gemini-2.5-flash", contents="ping",
+            model=GEMINI_MODEL, contents="ping",
             config={"thinking_config": {"thinking_budget": 0}})
         return True
     except Exception as e:

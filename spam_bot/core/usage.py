@@ -9,11 +9,12 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from .config import GEMINI_PRICE_IN, GEMINI_PRICE_OUT
+from .config import GEMINI_MODEL, GEMINI_PRICE_IN, GEMINI_PRICE_OUT
 
-# $ per 1M tokens (input, output). gemini-2.5-flash defaults; env-overridable via config.
-PRICING = {"gemini-2.5-flash": (GEMINI_PRICE_IN, GEMINI_PRICE_OUT)}
-_DEFAULT_MODEL = "gemini-2.5-flash"
+# $ per 1M tokens (input, output). Keyed on the configured model; cost_usd falls back
+# to these rates for any other model name, so historic rows still price out.
+PRICING = {GEMINI_MODEL: (GEMINI_PRICE_IN, GEMINI_PRICE_OUT)}
+_DEFAULT_MODEL = GEMINI_MODEL
 
 _TASHKENT = timedelta(hours=5)            # Uzbekistan, no DST
 _REPORT_STATE_KEY = "last_token_report_date"

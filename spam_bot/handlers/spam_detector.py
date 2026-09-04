@@ -8,12 +8,14 @@ from aiogram.enums import ChatType
 from aiogram.types import ChatPermissions, Message
 
 from ..core import groups, keys, patterns, usage, watchlist
+from ..core.config import GEMINI_MODEL
 from ..core.prompts import SPAM_SYSTEM_INSTRUCTION
 from ..core.ratelimit import RateLimiter
 from ..db.session import SessionLocal
 from ..db.models import BlockedUser, SpamReport
 from .admin_notifier import (
     announce_mute, notify_admins, notify_admins_burst, notify_admins_watched,
+    notify_operator_action,
 )
 
 # Import Gemini AI (optional — regex layer works without it).
@@ -25,8 +27,6 @@ except Exception as _e:
     logging.warning(f"google-genai unavailable — AI moderation DISABLED: {_e}")
 
 router = Router()
-
-GEMINI_MODEL = "gemini-2.5-flash"
 
 _client_cache: dict = {}  # sha256(key) -> genai.Client
 
@@ -182,6 +182,15 @@ async def block_user(bot, chat_id: int, user_id: int, reason: str,
             db.commit()
         logging.info(f"{'Banned' if ban else 'Blocked'} {user_id} ({user_type}, "
                      f"permanent={is_permanent or ban}): {reason}")
+        # Every automated restriction funnels through here, so this one call gives
+        # the operator a complete feed of who was actioned in which group.
+        if ban:
+            label = "🔨 BAN (guruhdan chiqarildi)"
+        elif is_permanent:
+            label = "🔇 DOIMIY OVOZSIZ"
+        else:
+            label = "🔇 OVOZSIZ (24 soat)"
+        await notify_operator_action(bot, chat_id, user_id, label, reason, user_type)
     except Exception as e:
         logging.error(f"Failed to block user {user_id}: {e}")
 

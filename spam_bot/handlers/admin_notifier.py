@@ -11,7 +11,7 @@ from aiogram.types import (
 )
 
 from ..core import copy, groups, patterns, stats, usage, watchlist
-from ..core.config import ADMIN_TELEGRAM_IDS, MAX_GROUPS_PER_OWNER
+from ..core.config import ADMIN_TELEGRAM_IDS, MAX_GROUPS_PER_OWNER, OPERATOR_ALERTS
 from ..core.ratelimit import RateLimiter
 
 router = Router()
@@ -134,6 +134,66 @@ async def notify_group(bot, chat_id: int, text: str, reply_markup=None) -> None:
         logging.info(f"alert dropped: no reachable admin for chat {chat_id}")
 
 
+_chat_title_cache: dict = {}    # chat_id -> (title, monotonic_ts)
+_CHAT_TITLE_TTL = 900.0         # renames are rare; a stale name for 15 min is fine
+
+
+async def _chat_title(bot, chat_id: int) -> str:
+    """Group title for operator alerts, cached. Falls back to the raw id — the
+    alert must still say *which* group even when get_chat fails."""
+    cached = _chat_title_cache.get(chat_id)
+    if cached and time.monotonic() - cached[1] <= _CHAT_TITLE_TTL:
+        return cached[0]
+    try:
+        chat = await bot.get_chat(chat_id)
+        title = chat.title or str(chat_id)
+    except Exception as e:
+        logging.info(f"get_chat failed for {chat_id}: {e}")
+        return cached[0] if cached else str(chat_id)
+    _chat_title_cache[chat_id] = (title, time.monotonic())
+    return title
+
+
+async def _user_label(bot, chat_id: int, user_id: int) -> str:
+    """'Name (@handle)' for a user id. Best-effort: a banned account may already
+    be gone, in which case the id alone still identifies them."""
+    try:
+        m = await bot.get_chat_member(chat_id, user_id)
+        u = m.user
+        return f"{u.full_name} (@{u.username})" if u.username else u.full_name
+    except Exception:
+        return "?"
+
+
+async def notify_operator_action(bot, chat_id: int, user_id: int, action: str,
+                                 reason: str, user_type: str = "",
+                                 by: str = "") -> None:
+    """Mirror one moderation action to the operator DMs, naming the group and the
+    account. No-op unless OPERATOR_ALERTS is set — see config.py for why the
+    default keeps group alerts inside the group."""
+    if not OPERATOR_ALERTS or not ADMIN_TELEGRAM_IDS:
+        return
+    try:
+        title = await _chat_title(bot, chat_id)
+        who = await _user_label(bot, chat_id, user_id)
+        lines = [
+            f"{action}",
+            f"💬 Guruh: {title} ({chat_id})",
+            f"👤 Foydalanuvchi: {who}",
+            f"🆔 {user_id}",
+        ]
+        if user_type:
+            lines.append(f"👥 Turi: {user_type}")
+        if by:
+            lines.append(f"🧑‍⚖️ Kim: {by}")
+        lines.append(f"📝 Sabab: {reason}")
+        lines.append(f"⏰ {datetime.now():%Y-%m-%d %H:%M:%S}")
+        await send_to_admins(bot, "\n".join(lines))
+    except Exception as e:
+        # An operator alert must never break the moderation action that triggered it.
+        logging.error(f"notify_operator_action failed for {user_id}@{chat_id}: {e}")
+
+
 def action_keyboard(chat_id: int, user_id: int) -> InlineKeyboardMarkup:
     """Ban / Unmute buttons for an admin alert about `user_id` in `chat_id`."""
     return InlineKeyboardMarkup(inline_keyboard=[[
@@ -180,6 +240,10 @@ async def on_admin_action(cb: CallbackQuery) -> None:
         if action == "ban":
             await cb.bot.ban_chat_member(chat_id, user_id)
             note = f"\n\n🔨 Banned by @{cb.from_user.username or cb.from_user.id}."
+            await notify_operator_action(
+                cb.bot, chat_id, user_id, "🔨 BAN (admin tugma orqali)",
+                "admin alert'dagi Ban tugmasi",
+                by=f"@{cb.from_user.username or cb.from_user.id}")
         else:  # unmute
             await cb.bot.restrict_chat_member(chat_id, user_id, permissions=_ALL_PERMS)
             note = f"\n\n✅ Unmuted by @{cb.from_user.username or cb.from_user.id}."
@@ -771,6 +835,10 @@ async def handle_ban_command(message: Message) -> None:
         except Exception:
             pass
         await reply_temp(message, f"🔨 Banned {target.full_name}.")
+        await notify_operator_action(
+            message.bot, message.chat.id, target.id, "🔨 BAN (/ban buyrug'i)",
+            "admin /ban buyrug'ini ishlatdi",
+            by=f"@{message.from_user.username or message.from_user.id}")
     except Exception as e:
         await reply_temp(message, f"Couldn't ban (are they an admin?): {e}")
     await delete_command(message)
