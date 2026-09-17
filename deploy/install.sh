@@ -8,7 +8,7 @@ set -euo pipefail
 
 APP_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
 APP_DIR="/opt/killspam-bot"
-REPO="https://github.com/anvarnarz/killspam-bot.git"
+REPO="https://github.com/SarvarVakhobov/killspam-bot.git"
 SERVICE="killspam-bot"
 DB_NAME="spam_bot_db"
 DB_USER="spam"
@@ -156,7 +156,7 @@ log "systemd service"
 cat > "/etc/systemd/system/$SERVICE.service" <<UNIT
 [Unit]
 Description=killspam-bot — Telegram spam/fake account protection bot
-Documentation=https://github.com/anvarnarz/killspam-bot
+Documentation=https://github.com/SarvarVakhobov/killspam-bot
 After=network-online.target postgresql.service
 Wants=network-online.target
 Requires=postgresql.service

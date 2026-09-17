@@ -5,46 +5,37 @@ Ikki yo'l bor. **Qaysi birini tanlash hostga bog'liq — xohishga emas.**
 | Host qanday | Yo'l |
 |---|---|
 | Python 3.11/3.12 bor **va** 5432 porti bo'sh | `deploy/install.sh` (nativ + systemd) |
-| Python 3.13+ yoki 5432 band | `docker-compose.yml` (**SERVER_IP shu holatda**) |
+| Python 3.13+ (masalan Ubuntu 26.04) yoki 5432 band | `docker-compose.yml` — **tavsiya etiladi** |
 
-`install.sh` boshida shu ikki shartni o'zi tekshiradi va mos kelmasa
-ishlamay to'xtaydi — o'rtada qulab qolmaydi.
+`install.sh` boshida shu ikki shartni o'zi tekshiradi va mos kelmasa ishlamay
+to'xtaydi — o'rtada qulab qolmaydi.
 
 ---
 
-## Docker yo'li (SERVER_IP uchun ishlatilgan)
+## Docker yo'li
 
-### Nega aynan Docker
+### Nega Docker
 
-Ubuntu 26.04 da faqat **Python 3.14** bor. `aiogram==3.13.0` esa
+Yangi Ubuntu (26.04) da faqat **Python 3.14** bor. `aiogram==3.13.0` esa
 `aiohttp<3.11` va `pydantic<2.9` ni talab qiladi, bu paketlar Python 3.14 uchun
-wheel chiqarmagan (`aiohttp` da cp314 faqat 3.13.0 dan boshlanadi). Natijada
+wheel chiqarmagan (`aiohttp` da cp314 faqat 3.13.0 dan boshlanadi), shuning uchun
 nativ o'rnatish `ResolutionImpossible` bilan tugaydi.
 
-`Dockerfile` `python:3.11-slim` ni qotirib qo'yadi — bu lokalda 120 ta test
-bilan tasdiqlangan aynan o'sha muhit, shuning uchun `requirements.txt` ni
-o'zgartirish shart emas.
+`Dockerfile` `python:3.11-slim` ni qotirib qo'yadi — testlar ishlaydigan aynan
+o'sha muhit, shuning uchun `requirements.txt` ni o'zgartirish shart emas.
 
-Ikkinchi sabab: serverda 5432 portini boshqa loyihaning postgres konteyneri
-egallagan. `docker-compose.yml` bazaning host portini **umuman ochmaydi** —
-bot unga ichki tarmoq orqali `db` nomi bilan ulanadi, shuning uchun to'qnashuv
-bo'lmaydi.
+`docker-compose.yml` bazaning host portini **umuman ochmaydi**: bot bazaga ichki
+tarmoq orqali `db` nomi bilan ulanadi. Serverda boshqa PostgreSQL 5432 ni
+egallagan bo'lsa ham to'qnashuv bo'lmaydi.
 
 ### O'rnatish
 
 ```bash
-# 1. Kodni ko'chirish (GitHub'dan EMAS — pastdagi ogohlantirishga qarang)
-tar czf /tmp/src.tgz --exclude=.git --exclude=.venv --exclude=logs --exclude=.env .
-scp /tmp/src.tgz user@SERVER_IP:/tmp/
-ssh user@SERVER_IP 'sudo mkdir -p /opt/killspam-bot && \
-  sudo chown $USER /opt/killspam-bot && cd /opt/killspam-bot && tar xzf /tmp/src.tgz'
-
-# 2. .env yaratish (600 huquq bilan!) — namuna uchun .env.example ga qarang.
-#    DATABASE_URL host sifatida "db" ni ishlatadi va sslmode=disable bilan tugaydi.
-#    DB_PASSWORD compose uchun alohida kerak.
-
-# 3. Ko'tarish
-ssh user@SERVER_IP 'cd /opt/killspam-bot && docker compose up -d --build'
+git clone https://github.com/SarvarVakhobov/killspam-bot.git /opt/killspam-bot
+cd /opt/killspam-bot
+cp .env.example .env && chmod 600 .env    # to'ldiring — pastga qarang
+docker compose up -d --build
+curl -s http://localhost:8090/health       # {"status": "ok", ...}
 ```
 
 ### `.env` da diqqat qilinadigan qatorlar
@@ -55,20 +46,29 @@ DB_PASSWORD=<yuqoridagi bilan bir xil parol>
 BASE_URL=http://SERVER_IP:8090
 PORT=8090
 GEMINI_MODEL=gemini-3.1-flash-lite
+OPERATOR_ALERTS=1                 # ixtiyoriy: har bir ban operatorga ham keladi
+VIRUSTOTAL_API_KEY=<kalit>        # ixtiyoriy: havolalarni VirusTotal'da tekshirish
+VT_MALICIOUS_THRESHOLD=2
 ```
 
 - `sslmode=disable` **shart**: `spam_bot/db/session.py` faqat `localhost`,
-  `127.0.0.1` va `.railway.internal` ni "lokal" deb biladi; compose xizmati
-  `db` bu ro'yxatga tushmaydi, shuning uchun kod `sslmode=require` qo'yardi,
-  oddiy postgres konteynerida esa SSL yo'q. URL'da aniq ko'rsatilgan qiymat
+  `127.0.0.1` va `.railway.internal` ni "lokal" deb biladi. Compose xizmati `db`
+  bu ro'yxatga kirmaydi, shuning uchun kod `sslmode=require` qo'yardi, oddiy
+  postgres konteynerida esa SSL yo'q. URL'da aniq ko'rsatilgan qiymat
   evristikadan ustun turadi. Trafik Docker'ning ichki tarmog'idan chiqmaydi.
-- `KEY_ENCRYPTION_SECRET` ni **hech qachon o'zgartirmang**. U almashsa,
-  bazadagi shifrlangan Gemini kalitlari ochilmay qoladi va har bir guruh
-  `/setkey` ni qaytadan qilishga majbur bo'ladi.
+- `KEY_ENCRYPTION_SECRET` ni **hech qachon o'zgartirmang**. U almashsa, bazadagi
+  shifrlangan Gemini kalitlari ochilmay qoladi va har bir guruh `/setkey` ni
+  qaytadan qilishga majbur bo'ladi.
+- `.env` ni o'zgartirgandan keyin `docker compose restart` **yetmaydi** —
+  o'zgaruvchilar konteyner yaratilganda yoziladi. `docker compose up -d bot`
+  ishlating.
+- `BASE_URL` — `/setkey` va `/globalkey set` havolalari shu manzilga ochiladi.
+  LAN manzili bo'lsa, havola faqat shu tarmoqdagi qurilmalarda ochiladi.
+  Tashqaridan kerak bo'lsa domen va HTTPS (reverse proxy) qo'shing.
 
 ### Bazani ko'chirish (ixtiyoriy)
 
-Guruh sozlamalari va shifrlangan kalitni saqlab qolish uchun:
+Guruh sozlamalari va shifrlangan kalitlarni boshqa serverdan saqlab qolish uchun:
 
 ```bash
 pg_dump -U spam -d spam_bot_db --no-owner --no-privileges > killspam.sql
@@ -81,35 +81,50 @@ ssh user@SERVER_IP \
 
 ---
 
-## ⚠️ GitHub'dagi kod eskirgan
+## Yangilash
 
-`install.sh` ichidagi `REPO` upstream'ga ishora qiladi, u yerdagi
-`spam_bot/handlers/spam_detector.py` hali ham `gemini-2.5-flash` ni qotirib
-yozgan. Bu model yangi API kalitlar uchun yopilgan va har chaqiruvda 404
-qaytaradi — natijada AI **jimgina** o'chadi, faqat regex qatlami qoladi va
-tashqaridan hammasi joyidadek ko'rinadi.
+```bash
+cd /opt/killspam-bot
+docker exec killspam-db pg_dump -U spam -d spam_bot_db > "backup-$(date +%F).sql"   # zaxira
+git pull
+docker compose up -d --build bot
+docker compose logs --tail 20 bot
+```
 
-Tuzatish hozircha faqat lokal ish katalogida. Shuning uchun yuqorida kod
-GitHub'dan emas, to'g'ridan-to'g'ri ko'chiriladi. `git push` qilinmaguncha
-`install.sh` dagi `git clone` yo'lidan foydalanmang.
+Bazaga yangi ustunlar kerak bo'lsa, `init_db.py` ularni bot ishga tushganda o'zi
+qo'shadi.
+
+> Asl repo (`anvarnarz/killspam-bot`) hali ham `gemini-2.5-flash` ni qotirib
+> yozgan — bu model yangi API kalitlar uchun yopilgan, AI jimgina o'chib qoladi.
+> Shu fork'dan (`https://github.com/SarvarVakhobov/killspam-bot`) oling.
+
+## Operator sozlamalari
+
+Bot ishga tushgach, `ADMIN_TELEGRAM_IDS` dagi akkauntdan botga **shaxsiy chatda**:
+
+- `/globalkey set` — kaliti yo'q guruhlar uchun umumiy Gemini kaliti (bir martalik havola orqali).
+- `/ai` — AI qaysi guruhlarda ishlashi: hammasida, hech birida yoki bittalab.
+
+> ⚠️ AI standart holatda **barcha** guruhlarda yoqilgan. Botni ommaga ochib, umumiy
+> kalit o'rnatsangiz, begonalar qo'shgan guruhlar ham shu kalit hisobidan ishlaydi.
+> `/ai` da standartni o'chirib, kerakli guruhlarni alohida yoqing. Sarfni `/tokens`
+> da ko'rasiz.
 
 ---
 
 ## Faqat bitta nusxa ishlashi kerak
 
 Bitta bot tokenini bir vaqtda ikkita jarayon so'ray olmaydi — ikkinchisi
-Telegram'dan `409 Conflict: terminated by other getUpdates request` oladi.
-Serverni ko'targandan keyin lokal (Windows) nusxani albatta to'xtating.
+Telegram'dan `409 Conflict: terminated by other getUpdates request` oladi. Yangi
+serverni ko'targandan keyin eski nusxani albatta to'xtating.
 
 Tekshirish uchun `getUpdates` ni qo'lda chaqirmang: u ishlab turgan botning
 so'rovini uzib qo'yadi va poll'lar orasidagi bo'shliqqa tushib, noto'g'ri
-"konflikt yo'q" natijasini beradi. Buning o'rniga logga qarang:
+"konflikt yo'q" natijasini berishi mumkin. Buning o'rniga logga qarang:
 
 ```bash
 docker logs killspam-bot | grep -E 'Run polling|Conflict'
 ```
-
----
 
 ## Kundalik buyruqlar
 
@@ -117,19 +132,22 @@ docker logs killspam-bot | grep -E 'Run polling|Conflict'
 cd /opt/killspam-bot
 docker compose ps                 # holat
 docker compose logs -f bot        # jonli log
-docker compose restart bot        # qayta ishga tushirish
-docker compose up -d --build bot  # kod yangilangandan keyin
+docker compose restart bot        # qayta ishga tushirish (.env o'zgarmagan bo'lsa)
+docker compose up -d --build bot  # kod yoki .env yangilangandan keyin
 curl -s http://SERVER_IP:8090/health
 ```
 
-Konteynerlar `restart: unless-stopped` bilan ishlaydi va Docker boot'da
-yoqilgan, shuning uchun qulash ham, server qayta yuklanishi ham botni
-to'xtatmaydi. Buni sinash uchun konteyner ichidagi python jarayonini o'ldiring
-(`docker kill` **emas** — uni Docker qo'lda to'xtatish deb hisoblaydi va
-restart siyosatini qo'llamaydi).
+## Doimiy ishlash
 
-## `/setkey` haqida
+Konteynerlar `restart: unless-stopped` bilan ishlaydi. Docker ham boot'da yoqilgan
+bo'lsa (`systemctl is-enabled docker`), qulash ham, server qayta yuklanishi ham
+botni to'xtatmaydi. Server yonayotganda bot bazadan oldin ishga tushib qolsa, u bir
+necha marta qulab, baza tayyor bo'lgach o'zi tiklanadi.
 
-`BASE_URL` LAN manzili. `/setkey` havolasi faqat shu tarmoqdagi qurilmalarda
-ochiladi — mobil internetdan ishlamaydi. Tashqaridan kerak bo'lsa domen va
-HTTPS (reverse proxy) qo'shish lozim.
+Bitta istisno: `docker stop` yoki `docker compose stop` qilingan konteynerni
+`unless-stopped` "qasddan to'xtatilgan" deb hisoblaydi va qayta yuklangandan keyin
+ham ko'tarmaydi. Keyin `docker compose up -d` bilan qaytaring.
+
+Tiklanishni sinash uchun konteyner ichidagi python jarayonini o'ldiring —
+`docker kill` **emas**: uni Docker qo'lda to'xtatish deb hisoblaydi va restart
+siyosatini qo'llamaydi.

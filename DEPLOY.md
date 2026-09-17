@@ -33,7 +33,8 @@ the web server. Railway assigns it a public domain — set that as `BASE_URL`.
    - `KEY_ENCRYPTION_SECRET` (required for BYOK) encrypts stored Gemini keys at rest.
      **Keep it stable** — rotating it makes existing stored keys undecryptable (groups must re-run `/setkey`).
    - `BASE_URL` is the bot's public Railway domain — used to build the `/setkey` link. Railway sets `$PORT` automatically.
-   - There is **no** shared/operator Gemini key. Every group (including yours) sets its own via `/setkey`; AI is off for a group until it does.
+   - Optionally the operator can set one shared Gemini key for every group without its own (`/globalkey set` in the bot's DM); a group's `/setkey` key always wins. Choose which groups run AI with `/ai`.
+   - Optional variables — `GEMINI_MODEL`, `OPERATOR_ALERTS`, `VIRUSTOTAL_API_KEY`, `VT_MALICIOUS_THRESHOLD` — are described in the README's environment table.
 4. Deploy the current directory:
    ```bash
    railway up
