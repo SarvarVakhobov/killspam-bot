@@ -117,6 +117,7 @@ I store only what I need to moderate your group:
 • IDs of blocked or flagged accounts and your group's settings,
 • if you add a Gemini key, it is encrypted at rest and used only to classify your own group's messages.
 • if your group has no key of its own, the bot operator may classify its messages with a shared Gemini key; those messages are then sent to Google Gemini for that check only.
+• to catch phishing, the site address (domain) of links posted in the group may be checked with VirusTotal — never the message itself.
 
 I never sell your data or share it outside your group's admins. Run /disable to stop moderation; contact the bot operator to remove your data."""
 
@@ -127,6 +128,7 @@ Guruhingizni moderatsiya qilish uchun faqat zarur bo'lgan ma'lumotlarni saqlayma
 • bloklangan yoki belgilangan akkauntlar ID-lari va guruhingiz sozlamalari,
 • agar Gemini kalitini qo'shsangiz, u saqlash vaqtida shifrlanadi va faqat guruhingiz xabarlarini tasniflash uchun ishlatiladi.
 • agar guruhingizning o'z kaliti bo'lmasa, bot operatori xabarlarni umumiy Gemini kaliti bilan tasniflashi mumkin; bunda xabarlar faqat shu tekshiruv uchun Google Gemini'ga yuboriladi.
+• fishingni aniqlash uchun guruhga yuborilgan havolalarning sayt manzili (domeni) VirusTotal'da tekshirilishi mumkin — xabarning o'zi hech qachon yuborilmaydi.
 
 Ma'lumotlaringizni hech qachon sotmayman va guruhingiz adminlaridan tashqari hech kimga ulashmayman. Moderatsiyani to'xtatish uchun /disable buyrug'ini bering; ma'lumotlaringizni o'chirish uchun bot operatoriga murojaat qiling."""
 PRIVACY_TEXT = _UZ_PRIVACY + _SEP + PRIVACY_EN

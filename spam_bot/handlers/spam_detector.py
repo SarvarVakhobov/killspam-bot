@@ -7,7 +7,7 @@ from aiogram import Router, F
 from aiogram.enums import ChatType
 from aiogram.types import ChatPermissions, Message
 
-from ..core import ai_settings, groups, keys, patterns, usage, watchlist
+from ..core import ai_settings, groups, keys, linkcheck, patterns, usage, watchlist
 from ..core.config import GEMINI_MODEL
 from ..core.prompts import SPAM_SYSTEM_INSTRUCTION
 from ..core.ratelimit import RateLimiter
@@ -270,8 +270,12 @@ async def handle_spam_detection(message: Message) -> None:
             await notify_admins(message.bot, message, preason, "bot" if severe else "human")
             return  # severe -> banned; soft -> muted pending review
 
-    reason = classify_spam(text, key=(message.chat.id, message.from_user.id),
-                           group_id=message.chat.id)
+    # Phishing links first: a hidden link that shows one site but opens another, or
+    # a domain VirusTotal flags. A phishing post then never costs a Gemini call.
+    reason = await linkcheck.check_message(message)
+    if not reason:
+        reason = classify_spam(text, key=(message.chat.id, message.from_user.id),
+                               group_id=message.chat.id)
     if not reason:
         # Message looks fine. But if an admin flagged this account as a suspicious
         # bot profile, surface it (never auto-act) — once an hour per chat/user.
