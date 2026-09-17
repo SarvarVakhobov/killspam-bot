@@ -27,6 +27,10 @@ _ADD_COLUMNS = [
     ("learned_patterns", "group_id", "BIGINT"),
     ("feedback_reports", "group_id", "BIGINT"),
     ("group_config", "ai_enabled", "BOOLEAN"),
+    ("group_config", "vt_key_encrypted", "VARCHAR"),
+    ("group_config", "vt_key_set_by", "BIGINT"),
+    ("group_config", "vt_key_set_at", "TIMESTAMP"),
+    ("token_grants", "kind", "VARCHAR"),
 ]
 
 

@@ -47,7 +47,7 @@ BASE_URL=http://SERVER_IP:8090
 PORT=8090
 GEMINI_MODEL=gemini-3.1-flash-lite
 OPERATOR_ALERTS=1                 # ixtiyoriy: har bir ban operatorga ham keladi
-VIRUSTOTAL_API_KEY=<kalit>        # ixtiyoriy: havolalarni VirusTotal'da tekshirish
+VIRUSTOTAL_API_KEY=<kalit>        # ixtiyoriy: server bo'yicha zaxira VirusTotal kaliti
 VT_MALICIOUS_THRESHOLD=2
 ```
 
@@ -103,6 +103,9 @@ qo'shadi.
 Bot ishga tushgach, `ADMIN_TELEGRAM_IDS` dagi akkauntdan botga **shaxsiy chatda**:
 
 - `/globalkey set` — kaliti yo'q guruhlar uchun umumiy Gemini kaliti (bir martalik havola orqali).
+- `/globalvtkey set` — kaliti yo'q guruhlar uchun umumiy VirusTotal kaliti. Guruh adminlari `/setvtkey`
+  bilan o'z kalitini qo'shishi mumkin; hech biri bo'lmasa `.env` dagi `VIRUSTOTAL_API_KEY` ishlatiladi.
+  Bepul limit bitta kalitga kuniga 500 so'rov — guruhlar ko'paysa, o'z kalitlari bo'lgani ma'qul.
 - `/ai` — AI qaysi guruhlarda ishlashi: hammasida, hech birida yoki bittalab.
 
 > ⚠️ AI standart holatda **barcha** guruhlarda yoqilgan. Botni ommaga ochib, umumiy

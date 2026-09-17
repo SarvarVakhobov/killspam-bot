@@ -1,9 +1,10 @@
 """Run: python -m pytest tests/test_linkcheck.py  (no network: VirusTotal is a local fake).
 
-Guards phishing-link blocking: the 2026-09 "ijtimoiy yordam" scam (a link showing
-gov.uz that opens another site) is caught without any key; honest links are not;
-VirusTotal is budgeted, cached, never sees skipped platforms, and a failure lets
-the message through instead of blocking it.
+Guards the link checks: the 2026-09 "ijtimoiy yordam" scam (a link showing gov.uz
+that opens another site) and app downloads are caught without any key; honest
+links and tech talk are not; a VirusTotal-confirmed link bans while the free
+checks only mute; VirusTotal is budgeted per key, cached, never sees skipped
+platforms, and a failure lets the message through instead of blocking it.
 """
 import asyncio
 import os
@@ -38,23 +39,33 @@ def _entity(text, shown, type_="text_link", url=None):
     return MessageEntity(type=type_, offset=_u16(text[:i]), length=_u16(shown), url=url)
 
 
+def _msg(text, entities=None, caption=False, document=None, chat_id=None):
+    return SimpleNamespace(
+        text=None if caption else text, caption=text if caption else None,
+        entities=None if caption else entities, caption_entities=entities if caption else None,
+        document=document, chat=SimpleNamespace(id=chat_id) if chat_id else None)
+
+
 @pytest.fixture(autouse=True)
 def _vt(monkeypatch):
+    # No group keys in play: vt_key_for() falls through to the server .env key.
     monkeypatch.setattr(lc, "VIRUSTOTAL_API_KEY", "test-key")
     monkeypatch.setattr(lc, "VT_MALICIOUS_THRESHOLD", 2)
-    monkeypatch.setattr(lc, "_minute", lc.RateLimiter(limit=100, window=60.0))
-    monkeypatch.setattr(lc, "_day", lc.RateLimiter(limit=100, window=86400.0))
+    monkeypatch.setattr(lc, "_MINUTE_LIMIT", 100)
+    monkeypatch.setattr(lc, "_DAY_LIMIT", 100)
+    lc._budgets.clear()
     lc._cache.clear()
     yield
+    lc._budgets.clear()
     lc._cache.clear()
 
 
 def _fake_vt(monkeypatch, verdicts):
-    """Replace the HTTP call; record which domains were looked up."""
+    """Replace the HTTP call; record (domain, key) of every lookup."""
     calls = []
 
-    async def lookup(domain):
-        calls.append(domain)
+    async def lookup(domain, api_key):
+        calls.append((domain, api_key))
         return verdicts.get(domain, (0, True))
     monkeypatch.setattr(lc, "_vt_lookup", lookup)
     return calls
@@ -108,20 +119,52 @@ def test_link_hosts_collects_visible_and_hidden_links_once():
     assert lc.link_hosts(t, ents) == ["kun.uz", "evil.cc"]
 
 
+# --- app downloads (no key needed) -----------------------------------------------
+
+def test_visible_app_link_is_caught():
+    t = "Yangi versiya: https://x.site/files/Click.apk?v=2"
+    assert lc.app_link(t, [_entity(t, "https://x.site/files/Click.apk?v=2", "url")]) == \
+        "app download link: Click.apk"
+
+
+def test_hidden_app_link_is_caught():
+    t = "👉 YANGILASH"
+    assert lc.app_link(t, [_entity(t, "YANGILASH", url="https://evil.cc/update.EXE")]) == \
+        "app download link: update.EXE"
+
+
+def test_file_name_without_a_link_is_tech_talk():
+    # "run python.exe" in an IT group is not a download.
+    assert asyncio.run(lc.check_message(_msg("python.exe ni ishga tushiring, keyin app.apk"))) is None
+
+
+def test_attached_app_file_is_caught():
+    doc = SimpleNamespace(file_name="Click_yangi.apk")
+    assert lc.app_file(_msg(None, document=doc)) == "app file attached: Click_yangi.apk"
+
+
+def test_ordinary_document_passes():
+    assert lc.app_file(_msg(None, document=SimpleNamespace(file_name="kurs.pdf"))) is None
+    assert lc.app_file(_msg(None, document=SimpleNamespace(file_name=None))) is None
+
+
+def test_only_virustotal_verdicts_are_severe():
+    assert lc.is_severe("malicious link: VirusTotal flags evil.cc (7 engines)")
+    for soft in ("deceptive link: shows gov.uz, opens evil.cc", "app download link: a.apk",
+                 "app file attached: a.apk", "link flood: the same message from several accounts",
+                 None):
+        assert not lc.is_severe(soft)
+
+
 # --- VirusTotal ------------------------------------------------------------------
-
-def _msg(text, entities, caption=False):
-    return SimpleNamespace(
-        text=None if caption else text, caption=text if caption else None,
-        entities=None if caption else entities, caption_entities=entities if caption else None)
-
 
 def test_flagged_domain_blocks(monkeypatch):
     calls = _fake_vt(monkeypatch, {"whitestake.cc": (7, True)})
     t = "Yordam: https://uzbekistan.whitestake.cc/form"
     reason = asyncio.run(lc.check_message(_msg(t, [_entity(t, "https://uzbekistan.whitestake.cc/form", "url")])))
     assert reason == "malicious link: VirusTotal flags whitestake.cc (7 engines)"
-    assert calls == ["uzbekistan.whitestake.cc", "whitestake.cc"]   # parent checked too
+    assert [d for d, _k in calls] == ["uzbekistan.whitestake.cc", "whitestake.cc"]   # parent too
+    assert lc.is_severe(reason)
 
 
 def test_below_threshold_passes(monkeypatch):
@@ -144,34 +187,36 @@ def test_skipped_platforms_never_reach_virustotal(monkeypatch):
     assert calls == []
 
 
-def test_verdicts_are_cached(monkeypatch):
+def test_verdicts_are_cached_across_keys(monkeypatch):
     calls = _fake_vt(monkeypatch, {"evil.cc": (5, True)})
-    for _ in range(3):
-        assert asyncio.run(lc.malicious_count("evil.cc")) == 5
-    assert calls == ["evil.cc"]
+    for key in ("k1", "k1", "k2"):
+        assert asyncio.run(lc.malicious_count("evil.cc", key)) == 5
+    assert len(calls) == 1          # a domain's reputation doesn't depend on whose key asked
 
 
 def test_failures_are_not_cached_and_let_the_message_pass(monkeypatch):
     calls = []
 
-    async def broken(domain):
+    async def broken(domain, api_key):
         calls.append(domain)
         return None
     monkeypatch.setattr(lc, "_vt_lookup", broken)
     t = "https://evil.cc"
     assert asyncio.run(lc.check_message(_msg(t, [_entity(t, t, "url")]))) is None
-    assert asyncio.run(lc.malicious_count("evil.cc")) is None
+    assert asyncio.run(lc.malicious_count("evil.cc", "test-key")) is None
     assert calls == ["evil.cc", "evil.cc"]
 
 
-def test_spent_budget_skips_lookup(monkeypatch):
-    calls = _fake_vt(monkeypatch, {"evil.cc": (9, True)})
-    monkeypatch.setattr(lc, "_minute", lc.RateLimiter(limit=0, window=60.0))
-    assert asyncio.run(lc.malicious_count("evil.cc")) is None
-    assert calls == []
+def test_each_key_has_its_own_budget(monkeypatch):
+    calls = _fake_vt(monkeypatch, {})
+    monkeypatch.setattr(lc, "_MINUTE_LIMIT", 1)
+    assert asyncio.run(lc.malicious_count("a.cc", "k1")) == 0
+    assert asyncio.run(lc.malicious_count("b.cc", "k1")) is None      # k1 spent
+    assert asyncio.run(lc.malicious_count("b.cc", "k2")) == 0          # k2 untouched
+    assert calls == [("a.cc", "k1"), ("b.cc", "k2")]
 
 
-def test_no_key_means_no_lookups_but_deception_still_caught(monkeypatch):
+def test_no_key_means_no_lookups_but_free_checks_still_run(monkeypatch):
     calls = _fake_vt(monkeypatch, {"evil.cc": (9, True)})
     monkeypatch.setattr(lc, "VIRUSTOTAL_API_KEY", "")
     t = "https://evil.cc"
@@ -186,13 +231,13 @@ def test_http_parsing_against_a_local_fake(monkeypatch):
 
     async def domains(request):
         seen_keys.append(request.headers.get("x-apikey"))
+        if request.headers.get("x-apikey") != "test-key":
+            return web.json_response({"error": {"code": "WrongCredentialsError"}}, status=401)
         d = request.match_info["d"]
-        if d == "evil.cc":
+        if d in ("evil.cc", "google.com"):
             return web.json_response({"data": {"attributes": {"last_analysis_stats": {
-                "malicious": 6, "suspicious": 1, "harmless": 50, "undetected": 20}}}})
-        if d == "new.cc":
-            return web.json_response({"error": {"code": "NotFoundError"}}, status=404)
-        return web.json_response({"error": {"code": "WrongCredentialsError"}}, status=401)
+                "malicious": 6 if d == "evil.cc" else 0, "harmless": 50}}}})
+        return web.json_response({"error": {"code": "NotFoundError"}}, status=404)
 
     async def run():
         app = web.Application()
@@ -202,23 +247,27 @@ def test_http_parsing_against_a_local_fake(monkeypatch):
         try:
             monkeypatch.setattr(lc, "_VT_DOMAIN_URL",
                                 f"http://{server.host}:{server.port}/api/v3/domains/{{}}")
-            return (await lc._vt_lookup("evil.cc"), await lc._vt_lookup("new.cc"),
-                    await lc._vt_lookup("badkey.cc"))
+            return (await lc._vt_lookup("evil.cc", "test-key"),
+                    await lc._vt_lookup("new.cc", "test-key"),
+                    await lc._vt_lookup("evil.cc", "bad-key"),
+                    await lc.key_works("test-key"),
+                    await lc.key_works("bad-key"))
         finally:
             await server.close()
 
-    assert asyncio.run(run()) == ((6, True), (0, False), None)
-    assert seen_keys == ["test-key"] * 3
+    assert asyncio.run(run()) == ((6, True), (0, False), None, True, False)
+    assert seen_keys == ["test-key", "test-key", "bad-key", "test-key", "bad-key"]
 
 
 # --- handler ---------------------------------------------------------------------
 
-def test_group_handler_deletes_and_mutes_without_calling_ai(monkeypatch):
-    deleted, blocked, alerts = [], {}, []
+def _handler_setup(monkeypatch, check_reason=None):
+    """Wire handle_spam_detection to fakes; return what it deleted, blocked, alerted."""
+    rec = {"deleted": [], "blocked": [], "alerts": [], "announced": []}
 
     class Bot:
         async def delete_message(self, chat_id, message_id):
-            deleted.append(message_id)
+            rec["deleted"].append(message_id)
 
     async def no(*a, **k):
         return False
@@ -226,35 +275,79 @@ def test_group_handler_deletes_and_mutes_without_calling_ai(monkeypatch):
     async def nothing(*a, **k):
         return None
 
-    async def block(bot, chat_id, user_id, reason, user_type, is_permanent=False, ban=False):
-        blocked.update(reason=reason, user_type=user_type, permanent=is_permanent, ban=ban)
+    async def block(bot, chat_id, user_id, reason, user_type="human", is_permanent=False, ban=False):
+        rec["blocked"].append({"reason": reason, "user_type": user_type,
+                               "permanent": is_permanent, "ban": ban})
 
     async def alert(bot, message, reason, user_type):
-        alerts.append(reason)
+        rec["alerts"].append(reason)
+
+    async def announce(*a, **k):
+        rec["announced"].append(a)
 
     def ai_must_not_run(*a, **k):
-        raise AssertionError("a phishing post must not cost a Gemini call")
+        raise AssertionError("a link hit must not cost a Gemini call")
 
-    ents = [_entity(SCAM, "https://gov.uz/viplata2026", url="https://uzbekistan.whitestake.cc/")]
-    msg = SimpleNamespace(
-        chat=SimpleNamespace(id=-100, type="supergroup", title="T"),
-        from_user=SimpleNamespace(id=5, full_name="U", username="u", is_bot=False),
-        sender_chat=None, message_id=77, text=SCAM, caption=None,
-        entities=ents, caption_entities=None, bot=Bot())
-    monkeypatch.setattr(lc, "VIRUSTOTAL_API_KEY", "")
     monkeypatch.setattr(sd.groups, "is_allowed", lambda cid: True)
     monkeypatch.setattr(sd, "_sender_is_admin", no)
     monkeypatch.setattr(profile_checker, "check_profile", nothing)
     monkeypatch.setattr(sd, "_report_spam", nothing)
-    monkeypatch.setattr(sd, "announce_mute", nothing)
+    monkeypatch.setattr(sd, "announce_mute", announce)
     monkeypatch.setattr(sd, "block_user", block)
     monkeypatch.setattr(sd, "notify_admins", alert)
     monkeypatch.setattr(sd, "classify_spam", ai_must_not_run)
+    if check_reason is not None:
+        async def check(message):
+            return check_reason
+        monkeypatch.setattr(sd.linkcheck, "check_message", check)
     sd._profile_checked.clear()
+    sd._clear_burst_chat(-100)
+    return Bot(), rec
 
+
+def _group_msg(bot, text, entities=None, document=None):
+    return SimpleNamespace(
+        chat=SimpleNamespace(id=-100, type="supergroup", title="T"),
+        from_user=SimpleNamespace(id=5, full_name="U", username="u", is_bot=False),
+        sender_chat=None, message_id=77, text=text, caption=None,
+        entities=entities, caption_entities=None, document=document, bot=bot)
+
+
+def test_disguised_link_mutes_without_calling_ai(monkeypatch):
+    monkeypatch.setattr(lc, "VIRUSTOTAL_API_KEY", "")
+    bot, rec = _handler_setup(monkeypatch)
+    ents = [_entity(SCAM, "https://gov.uz/viplata2026", url="https://uzbekistan.whitestake.cc/")]
+    asyncio.run(sd.handle_spam_detection(_group_msg(bot, SCAM, ents)))
+    assert rec["deleted"] == [77]
+    assert rec["blocked"] == [{"reason": "deceptive link: shows gov.uz, opens uzbekistan.whitestake.cc",
+                               "user_type": "human", "permanent": False, "ban": False}]
+    assert len(rec["announced"]) == 1 and rec["alerts"] == [rec["blocked"][0]["reason"]]
+
+
+def test_virustotal_confirmed_link_bans(monkeypatch):
+    reason = "malicious link: VirusTotal flags whitestake.cc (15 engines)"
+    bot, rec = _handler_setup(monkeypatch, check_reason=reason)
+    asyncio.run(sd.handle_spam_detection(_group_msg(bot, "https://whitestake.cc/x")))
+    assert rec["deleted"] == [77]
+    assert rec["blocked"] == [{"reason": reason, "user_type": "bot", "permanent": True, "ban": True}]
+    assert rec["announced"] == []                 # a ban isn't announced as a 24h mute
+    assert rec["alerts"] == [reason]
+
+
+def test_app_file_without_caption_is_checked(monkeypatch):
+    # An .apk needs no caption; before, captionless messages were skipped entirely.
+    monkeypatch.setattr(lc, "VIRUSTOTAL_API_KEY", "")
+    bot, rec = _handler_setup(monkeypatch)
+    msg = _group_msg(bot, None, document=SimpleNamespace(file_name="Click_yangi.apk"))
     asyncio.run(sd.handle_spam_detection(msg))
+    assert rec["deleted"] == [77]
+    assert rec["blocked"][0] == {"reason": "app file attached: Click_yangi.apk",
+                                 "user_type": "human", "permanent": False, "ban": False}
 
-    assert deleted == [77]
-    assert blocked == {"reason": "deceptive link: shows gov.uz, opens uzbekistan.whitestake.cc",
-                       "user_type": "human", "permanent": False, "ban": False}   # 24h mute, undoable
-    assert alerts == [blocked["reason"]]
+
+def test_captionless_ordinary_file_is_left_alone(monkeypatch):
+    monkeypatch.setattr(lc, "VIRUSTOTAL_API_KEY", "")
+    bot, rec = _handler_setup(monkeypatch)
+    msg = _group_msg(bot, None, document=SimpleNamespace(file_name="kurs.pdf"))
+    asyncio.run(sd.handle_spam_detection(msg))
+    assert rec["deleted"] == [] and rec["blocked"] == []

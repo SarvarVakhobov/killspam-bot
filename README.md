@@ -2,7 +2,7 @@
 
 # 🛡️ Spam Protection Bot
 
-**Guruhlarni 18+ fake akkauntlar va fishing havolalardan tozalaydigan, o‘z-o‘ziga xizmat ko‘rsatuvchi Telegram boti — behayo profil rasmlari va bio’lar, kattalar uchun spam-bot tuzoqlari hamda asl manzilini yashiradigan havolalar avtomatik o‘chiriladi.**
+**Guruhlarni 18+ fake akkauntlar, fishing havolalar va ilova firibgarliklaridan tozalaydigan, o‘z-o‘ziga xizmat ko‘rsatuvchi Telegram boti — behayo profil rasmlari va bio’lar, kattalar uchun spam-bot tuzoqlari, zararli va yashirin havolalar, .apk/.exe yuklamalari hamda havolali ommaviy xabarlar avtomatik o‘chiriladi.**
 
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
@@ -23,24 +23,26 @@ O‘zingiz server ko‘tarmoqchi bo‘lmasangiz, shu fork kodi asosida ishlab tu
 2. Guruhda `/enable` deb yozing.
 3. Bot bilan shaxsiy chatni ochib **Start** tugmasini bosing — shunda bot ogohlantirishlarni sizga yubora oladi.
 
-Bot 18+ fake akkauntlar va fishing havolalarni o‘chiradi; oddiy suhbat, reklama va kanal havolalariga tegmaydi. Bu botda AI moderatsiyani uning operatori yoqadi.
+Bot 18+ fake akkauntlar, fishing havolalar, ilova firibgarliklari va havolali ommaviy xabarlarni o‘chiradi; oddiy suhbat, reklama va kanal havolalariga tegmaydi. **Hozircha hamma uchun bepul.** Bu botda AI moderatsiyani uning operatori yoqadi.
 
 ---
 
 ## Bu nima
 
-Hamjamiyat guruhlari — IT o‘quv guruhlari, kino muhokamasi va boshqalar — uchun Telegram moderatsiya boti. Har kim uni guruhiga qo‘shib, `/enable` buyrug‘ini berishi va darhol himoyaga ega bo‘lishi mumkin. Bot **ko‘p foydalanuvchili (multi-tenant)**: har bir guruh o‘zining Google Gemini kalitini ulashi mumkin (**BYOK**), operator esa kaliti yo‘q guruhlar uchun bitta **umumiy kalit** berishi mumkin. Hech qanday kalit bo‘lmasa ham bepul tekshiruvlar — profil rasmlarini mahalliy skanerlash, 18+ havolali bio’lar va yashirin fishing havolalar — guruhni himoya qilishda davom etadi.
+Hamjamiyat guruhlari — IT o‘quv guruhlari, kino muhokamasi va boshqalar — uchun Telegram moderatsiya boti. Har kim uni guruhiga qo‘shib, `/enable` buyrug‘ini berishi va darhol himoyaga ega bo‘lishi mumkin. Bot **ko‘p foydalanuvchili (multi-tenant)**: har bir guruh o‘zining Google Gemini kalitini ulashi mumkin (**BYOK**), operator esa kaliti yo‘q guruhlar uchun bitta **umumiy kalit** berishi mumkin. Hech qanday kalit bo‘lmasa ham bepul tekshiruvlar — profil rasmlarini mahalliy skanerlash, 18+ havolali bio’lar, yashirin havolalar, ilova yuklamalari va havolali ommaviy xabarlar — guruhni himoya qilishda davom etadi.
 
 ## 🎯 Nimalar bloklanadi — va nimalar yo‘q
 
-Bot **faqat ikki narsaga** qarshi choralar ko‘radi:
+Bot **faqat quyidagilarga** qarshi choralar ko‘radi:
 
 | Bloklanadi | Qanday aniqlanadi | Chora |
 |---|---|---|
 | **18+ fake akkauntlar** | aniq behayo profil rasmi (NudeNet, mahalliy) · 18+ so‘zlar yonida havola bo‘lgan bio | ban + o‘chirish |
 | | AI xabar yoki bio’ni shahvoniy kontent yoki spam-bot tuzog‘i deb topadi | o‘chirish + 24 soat ovozsiz |
-| **Fishing havolalar** | havola matnida bir sayt ko‘rinadi, lekin boshqasi ochiladi (`https://gov.uz/…` → `evil.cc`) | o‘chirish + 24 soat ovozsiz |
-| | havola domenini VirusTotal antiviruslari zararli deb biladi | o‘chirish + 24 soat ovozsiz |
+| **Xavfli havolalar** | havola domenini VirusTotal antiviruslari zararli deb biladi | ban + o‘chirish |
+| **Yashirin havolalar** | havola matnida bir sayt ko‘rinadi, lekin boshqasi ochiladi (`https://gov.uz/…` → `evil.cc`) | o‘chirish + 24 soat ovozsiz |
+| **Ilova yuklamalari** | biriktirilgan `.apk`/`.exe` fayl, xabardagi unga havola yoki bio’dagi ilova havolasi | o‘chirish + 24 soat ovozsiz |
+| **Havolali ommaviy xabarlar** | 2 daqiqa ichida 3+ akkauntdan kelgan bir xil havolali xabar | barcha nusxalar o‘chiriladi + har biriga 24 soat ovozsiz |
 
 **Bloklanmaydi:** reklama va e’lonlar, a’zoning bio’sidagi o‘z kanali yoki taklif havolasi (`t.me/+…`), kripto haqidagi gaplar, haqoratlar, mavzudan tashqari suhbatlar, kino muhokamasi (yosh chegarasini tilga olish ham). Oldingi versiyalar bularning ayrimlari uchun odamlarni ovozsizlantirardi — bu qoidalar olib tashlandi.
 
@@ -50,8 +52,9 @@ Bot **faqat ikki narsaga** qarshi choralar ko‘radi:
 
 - **Ko‘p foydalanuvchili, o‘z-o‘ziga xizmat ko‘rsatuvchi** — botni qo‘shing, guruhda `/enable` bering, tamom. Har bir guruhning o‘z adminlari ogohlantirishlarni qabul qiladi.
 - **18+ fake akkauntlarni aniqlash** — profil rasmlari NudeNet yordamida mahalliy tekshiriladi (bulutga so‘rov yuborilmaydi), noaniq rasmlar bo‘yicha chora ko‘rilmaydi. Bio va xabarlarni AI qatlami baholaydi — u faqat shahvoniy kontent va spam-bot tuzoqlarini belgilashga sozlangan.
-- **Fishing havolalarni bloklash** — yashirin havolalar bepul va internetga murojaat qilmasdan aniqlanadi. VirusTotal API kaliti bo‘lsa, har bir havolaning asl domeni (va yuqori darajadagi domeni) ham tekshiriladi. Faqat domen yuboriladi, natijalar keshlanadi, yirik platformalar umuman tekshirilmaydi.
-- **AI kalitlari: guruhniki yoki umumiy** — `/setkey` guruhning o‘z Gemini kalitini bir martalik veb-shakl orqali shifrlab saqlaydi. Operator o‘z kaliti yo‘q barcha guruhlar uchun bitta umumiy kalit o‘rnatishi mumkin (`/globalkey`); guruhning o‘z kaliti doim ustun turadi.
+- **Fishing va ilova firibgarliklarini bloklash** — yashirin havolalar va ilova yuklamalari (`.apk`/`.exe` fayllar va havolalar) bepul, internetga murojaat qilmasdan aniqlanadi. VirusTotal kaliti bo‘lsa, har bir havolaning asl domeni (va yuqori darajadagi domeni) ham tekshiriladi, zararli ekani tasdiqlangan havolani yuborgan odam esa ban qilinadi. Faqat domen yuboriladi, natijalar keshlanadi, yirik platformalar umuman tekshirilmaydi.
+- **Havolali ommaviy xabarlarni aniqlash** — bir nechta akkaunt bir vaqtda bir xil havolali xabar yuborsa, barcha nusxalar o‘chiriladi va har bir yuboruvchi ovozsiz qilinadi; adminlarga har bir akkaunt uchun Unmute tugmasi bilan bitta xabar keladi. Havolasiz xabarlar hisobga olinmaydi, shuning uchun bir xil salomlashuvlar xavfsiz.
+- **Gemini va VirusTotal kalitlari: guruhniki yoki umumiy** — `/setkey` (Gemini) va `/setvtkey` (VirusTotal) guruhning o‘z kalitini bir martalik veb-shakl orqali tekshirib, shifrlab saqlaydi. Operator o‘z kaliti yo‘q barcha guruhlar uchun umumiy kalitlar o‘rnatishi mumkin (`/globalkey`, `/globalvtkey`); guruhning o‘z kaliti doim ustun turadi. Har bir VirusTotal kalitining kunlik limiti alohida.
 - **Operator uchun AI tugmasi** — `/ai` har bir guruhni AI holati bilan ko‘rsatadi va AI’ni barcha guruhlarda birdaniga yoki bittalab yoqib-o‘chiradi. Keyin qo‘shilgan guruhlar standart sozlamaga ergashadi.
 - **Operatorga ban lentasi** — `OPERATOR_ALERTS=1` bo‘lsa, barcha guruhlardagi har bir ban va ovozsizlantirish guruh, akkaunt va sabab bilan operatorning shaxsiy chatiga yuboriladi.
 - **Birinchi xabar + qo‘shilish vaqtidagi skanerlash** — profillar a’zo qo‘shilganda ham, birinchi xabarini yozganda ham tekshiriladi, shuning uchun ochiq guruhlarga havola orqali kirganlar ham nazoratda bo‘ladi.
@@ -65,14 +68,16 @@ Himoyalangan guruhdagi har bir xabar arzondan qimmatga qarab boruvchi zanjir orq
 
 1. **Profilni skanerlash (har bir a’zo uchun bir marta)** — qo‘shilganda va birinchi xabarda.
    - Aniq behayo rasm (NudeNet) yoki 18+ kontentga havola bergan bio → **ban + o‘chirish**.
+   - Ilova fayliga (`.apk`/`.exe`) havola bergan bio → 24 soat ovozsiz.
    - Aks holda bio AI qatlamiga (4-qadam) yuboriladi; 18+ degan xulosa → 24 soat ovozsiz.
-2. **Fishing havolalarni tekshirish** — avval yashirin havolalar (bepul), keyin kalit bo‘lsa VirusTotal domen reytingi. Bu AI’dan oldin ishlaydi, shuning uchun fishing xabar Gemini chaqiruviga pul sarflatmaydi.
+2. **Havolalarni tekshirish** — avval ilova yuklamalari va yashirin havolalar (bepul → 24 soat ovozsiz), keyin VirusTotal domen reytingi: guruhning o‘z kaliti, operatorning umumiy kaliti yoki serverdagi kalit bilan (zararli ekani tasdiqlansa → **ban**). Bu AI’dan oldin ishlaydi, shuning uchun bunday xabar Gemini chaqiruviga pul sarflatmaydi.
 3. **Kalit so‘z qatlami (bepul)** — faqat guruh adminlari `/teach` bilan o‘rgatgan so‘zlar. Boshlang‘ich ro‘yxat o‘zi hech narsani bloklamaydi.
 4. **AI qatlami** — guruhda AI yoqilgan bo‘lsa (`/ai`) va kalit mavjud bo‘lsa ishlaydi: avval guruhning o‘z kaliti, bo‘lmasa operatorning umumiy kaliti. Gemini (standart `gemini-3.1-flash-lite`) faqat 18+ kontentni baholaydi. Xarajatni nazorat qilish uchun so‘rovlar soni cheklangan.
+5. **Havolali ommaviy xabarlar detektori** — 2 daqiqa ichida 3+ akkauntdan kelgan bir xil havolali xabar → barcha nusxalar o‘chiriladi, har bir yuboruvchi 24 soat ovozsiz.
 
 Hamma narsa har bir guruh uchun alohida ishlaydi va bot `/enable` berilmagan guruhlarda mutlaqo jim turadi.
 
-**Maxfiylik:** Gemini kalitlari (guruhniki ham, umumiysi ham) Fernet yordamida shifrlab saqlanadi. Xabar matni Google Gemini’ga faqat AI yoqilgan guruhlarda yuboriladi. Havolalarning domeni VirusTotal’ga faqat kalit o‘rnatilganda yuboriladi — xabarning o‘zi hech qachon. Spam-hisobot matnlari va foydalanish qatorlari 90 kundan keyin o‘chiriladi.
+**Maxfiylik:** Gemini va VirusTotal kalitlari (guruhniki ham, umumiysi ham) Fernet yordamida shifrlab saqlanadi. Xabar matni Google Gemini’ga faqat AI yoqilgan guruhlarda yuboriladi. Havolalarning domeni VirusTotal’ga faqat kalit o‘rnatilganda yuboriladi — xabarning o‘zi hech qachon. Spam-hisobot matnlari va foydalanish qatorlari 90 kundan keyin o‘chiriladi.
 
 ## 🛠️ O‘rnatish va joylashtirish
 
@@ -104,7 +109,7 @@ pip install -r requirements.txt
 | `GEMINI_MODEL` | ➖ | AI moderatsiya uchun Gemini modeli (standart `gemini-3.1-flash-lite`). Google modelni yopsa, shu yerda almashtiring |
 | `GEMINI_PRICE_IN` / `GEMINI_PRICE_OUT` | ➖ | `/tokens` narx hisobi uchun $/1 mln token (standart `0.30` / `2.50` — flash narxlari; modelingizning haqiqiy narxini qo‘ying) |
 | `OPERATOR_ALERTS` | ➖ | `1` — har bir ban/ovozsizlantirish operatorga ham yuboriladi (standart `0`) |
-| `VIRUSTOTAL_API_KEY` | ➖ | VirusTotal havola tekshiruvini yoqadi (bepul kalit: virustotal.com → profil → API key; daqiqasiga 4, kuniga 500 so‘rov). Yashirin havola tekshiruvi kalitsiz ham ishlaydi |
+| `VIRUSTOTAL_API_KEY` | ➖ | Server bo‘yicha zaxira VirusTotal kaliti: guruh (`/setvtkey`) ham, operator (`/globalvtkey`) ham botda kalit qo‘shmagan bo‘lsa ishlatiladi (bepul kalit: virustotal.com → profil → API key; har bir kalitga daqiqasiga 4, kuniga 500 so‘rov). Yashirin havola va ilova tekshiruvlari kalitsiz ham ishlaydi |
 | `VT_MALICIOUS_THRESHOLD` | ➖ | Bot choralar ko‘rishi uchun domenni nechta antivirus zararli deb bilishi kerak (standart `2`) |
 | `REPORT_HOUR` | ➖ | Ertalabki hisobot soati (Asia/Tashkent) (standart `9`) |
 | `MAX_GROUPS_PER_OWNER` | ➖ | Suiiste’moldan himoya: operator bo‘lmagan bitta foydalanuvchi `/enable` qila oladigan guruhlar soni (standart `20`) |
@@ -122,7 +127,8 @@ python init_db.py && python -m spam_bot.main
 1. Botni guruhingizga qo‘shing va **Xabarlarni o‘chirish** + **Foydalanuvchilarni bloklash** huquqlari bilan **admin** qiling.
 2. Guruh ichida `/enable` buyrug‘ini bering.
 3. AI uchun: yoki guruhda `/setkey` bering (guruhning o‘z Gemini kaliti), yoki operator sifatida botga shaxsiy chatda `/globalkey set` yuborib umumiy kalit o‘rnating.
-4. Operator sifatida botga `/ai` yuborib, AI qaysi guruhlarda ishlashini tanlang.
+4. VirusTotal tekshiruvi uchun: guruhda `/setvtkey` bering yoki operator sifatida `/globalvtkey set` yuboring.
+5. Operator sifatida botga `/ai` yuborib, AI qaysi guruhlarda ishlashini tanlang.
 
 > ⚠️ AI barcha guruhlar uchun **standart holatda yoqilgan**. Botingizni umumiy kalit bilan ommaga ochsangiz, begonalar qo‘shgan guruhlar ham shu kalitdan foydalanadi. `/ai` da standartni o‘chirib, AI’ni faqat o‘zingiz tanlagan guruhlarda yoqing.
 
@@ -135,11 +141,13 @@ Har bir reliz git tegi (`vX.Y.Z`) hisoblanadi. Orqaga qaytarish uchun oldingi te
 |---|---|---|
 | `/enable` · `/disable` | Guruh adminlari | Guruh himoyasini yoqish/o‘chirish |
 | `/setkey` | Guruh adminlari | Guruhning o‘z Gemini kalitini saqlash (shaxsiy, bir martalik havola) |
+| `/setvtkey` | Guruh adminlari | Guruhning o‘z VirusTotal kalitini saqlash (shaxsiy, bir martalik havola) |
 | `/ban` · `/mute` | Guruh adminlari | Javob berilgan (reply) foydalanuvchini moderatsiya qilish |
 | `/tokens` | Guruh adminlari / operator | Gemini tokenlari sarfi + narxi (kecha / 7 kun / 30 kun) |
 | `/stats` | Operator (shaxsiy chat) | Guruhlar ro‘yxati (AI holati bilan) + spam/ban faolligi |
 | `/ai` | Operator (shaxsiy chat) | AI’ni barcha guruhlarda yoki bittalab yoqish/o‘chirish |
 | `/globalkey` | Operator (shaxsiy chat) | Umumiy kalit holati; `set` — kaliti yo‘q guruhlar uchun o‘rnatish, `off` — o‘chirish |
+| `/globalvtkey` | Operator (shaxsiy chat) | Xuddi shunday, umumiy VirusTotal kaliti uchun |
 | `/help` · `/privacy` | Hamma | Foydalanish qo‘llanmasi / ma’lumotlar siyosati |
 
 ## 🧰 Texnologiyalar to‘plami

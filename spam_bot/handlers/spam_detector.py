@@ -14,7 +14,8 @@ from ..core.ratelimit import RateLimiter
 from ..db.session import SessionLocal
 from ..db.models import BlockedUser, SpamReport
 from .admin_notifier import (
-    announce_mute, notify_admins, notify_admins_watched, notify_operator_action,
+    announce_mute, notify_admins, notify_admins_burst, notify_admins_watched,
+    notify_operator_action,
 )
 
 # Import Gemini AI (optional — regex layer works without it).
@@ -199,6 +200,77 @@ async def block_user(bot, chat_id: int, user_id: int, reason: str,
         logging.error(f"Failed to block user {user_id}: {e}")
 
 
+# --- Coordinated link flood ----------------------------------------------------
+# The same link message blasted from several accounts at once — a bot ring
+# advertising or phishing. Each copy might dodge the per-message checks (novel
+# text, AI off or rate-limited), but N identical copies from N senders is itself
+# the signal. Two guards keep real members out of it: only messages carrying a
+# link count (three people greeting alike is not a flood), and the penalty is the
+# usual undoable 24h mute, never a ban. In-memory, single process: a flood plays
+# out in seconds, so losing state on restart is fine.
+_BURST_WINDOW = 120.0    # seconds a copy stays "recent"
+_BURST_MIN_USERS = 3     # distinct senders of the same text -> coordinated
+_BURST_MIN_LEN = 12      # ignore very short messages
+_BURST_MAX_TEXTS = 200   # per-chat memory cap
+_burst: dict = {}        # chat_id -> {norm_text: {"hits": [(uid, mid, ts, name)], "flagged": bool}}
+
+
+def _record_burst(message: Message, norm_text: str) -> tuple:
+    """Record one link message and decide if it's part of a coordinated flood.
+
+    Returns (is_flood, cohort):
+      (False, None)                 not (yet) a flood
+      (True, [(uid, mid, name)..])  threshold just crossed — caller purges the cohort
+      (True, None)                  flood already flagged — handle this copy alone
+    """
+    if len(norm_text) < _BURST_MIN_LEN:
+        return False, None
+    now = time.monotonic()
+    chat = _burst.setdefault(message.chat.id, {})
+    rec = chat.get(norm_text) or {"hits": [], "flagged": False}
+    rec["hits"] = [h for h in rec["hits"] if now - h[2] < _BURST_WINDOW]
+    if not rec["hits"]:
+        rec["flagged"] = False   # the flood is over; the same text later starts afresh
+    rec["hits"].append((message.from_user.id, message.message_id, now,
+                        message.from_user.full_name))
+    chat[norm_text] = rec
+
+    # Bound memory: drop the least-recently-touched texts.
+    if len(chat) > _BURST_MAX_TEXTS:
+        for k in sorted(chat, key=lambda k: chat[k]["hits"][-1][2])[: len(chat) - _BURST_MAX_TEXTS]:
+            del chat[k]
+
+    if rec["flagged"]:
+        return True, None
+    if len({h[0] for h in rec["hits"]}) >= _BURST_MIN_USERS:
+        rec["flagged"] = True
+        return True, [(h[0], h[1], h[3]) for h in rec["hits"]]
+    return False, None
+
+
+def _clear_burst_chat(chat_id: int) -> None:
+    """Reset a chat's flood state (used by tests)."""
+    _burst.pop(chat_id, None)
+
+
+async def _purge_cohort(bot, chat_id: int, cohort: list, reason: str, ban: bool = False) -> list:
+    """Delete every stored copy and act on each distinct sender: a 24h mute, or a
+    ban when the shared link is a confirmed threat (VirusTotal).
+    Returns [(user_id, name)] of the actioned accounts, for the admin alert."""
+    actioned, seen = [], set()
+    for user_id, message_id, name in cohort:
+        try:
+            await bot.delete_message(chat_id, message_id)
+        except Exception as e:
+            logging.warning(f"link flood: failed to delete {message_id}: {e}")
+        if user_id not in seen:
+            seen.add(user_id)
+            await block_user(bot, chat_id, user_id, reason, user_type="bot" if ban else "human",
+                             is_permanent=ban, ban=ban)
+            actioned.append((user_id, name))
+    return actioned
+
+
 async def _report_spam(message: Message, reason: str) -> None:
     try:
         with SessionLocal() as db:
@@ -244,7 +316,8 @@ async def handle_spam_detection(message: Message) -> None:
         return
 
     text = message.text or message.caption or ""
-    if not text.strip():
+    has_file = getattr(message, "document", None) is not None   # an .apk needs no caption
+    if not text.strip() and not has_file:
         return
 
     if await _sender_is_admin(message):
@@ -270,12 +343,17 @@ async def handle_spam_detection(message: Message) -> None:
             await notify_admins(message.bot, message, preason, "bot" if severe else "human")
             return  # severe -> banned; soft -> muted pending review
 
-    # Phishing links first: a hidden link that shows one site but opens another, or
-    # a domain VirusTotal flags. A phishing post then never costs a Gemini call.
+    # Link checks first — app downloads, disguised links, VirusTotal — so such a post
+    # never costs a Gemini call.
     reason = await linkcheck.check_message(message)
-    if not reason:
+    if not reason and text.strip():
         reason = classify_spam(text, key=(message.chat.id, message.from_user.id),
                                group_id=message.chat.id)
+    cohort = None
+    if text.strip() and patterns.has_link(text):
+        is_flood, cohort = _record_burst(message, patterns.normalize(text))
+        if is_flood and not reason:
+            reason = "link flood: the same message from several accounts"
     if not reason:
         # Message looks fine. But if an admin flagged this account as a suspicious
         # bot profile, surface it (never auto-act) — once an hour per chat/user.
@@ -285,13 +363,23 @@ async def handle_spam_detection(message: Message) -> None:
         return
 
     await _report_spam(message, reason)
+    # A link VirusTotal confirms as malicious bans; everything else here is a 24h mute.
+    severe = linkcheck.is_severe(reason)
+
+    if cohort is not None:
+        # Threshold just crossed: delete every copy and act on every sender in one
+        # shot, so admins don't chase the accounts one by one.
+        actioned = await _purge_cohort(message.bot, message.chat.id, cohort, reason, ban=severe)
+        await notify_admins_burst(message.bot, message, reason, actioned, banned=severe)
+        return
+
     await _delete_message_safe(message)
 
     is_bot = is_bot_account(message)
-    user_type = "bot" if is_bot else "human"
+    user_type = "bot" if (is_bot or severe) else "human"
     await block_user(message.bot, message.chat.id, message.from_user.id,
-                     reason, user_type, is_permanent=is_bot)
-    if not is_bot:  # humans get a 24h mute (block_user's default) — announce it
+                     reason, user_type, is_permanent=is_bot or severe, ban=severe)
+    if user_type == "human":  # humans get a 24h mute (block_user's default) — announce it
         await announce_mute(message.bot, message.chat.id, message.from_user.full_name, 24, reason)
     await notify_admins(message.bot, message, reason, user_type)
 

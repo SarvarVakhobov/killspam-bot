@@ -33,7 +33,9 @@ MAX_GROUPS_PER_OWNER = int(os.getenv("MAX_GROUPS_PER_OWNER", "20"))
 OPERATOR_ALERTS = os.getenv("OPERATOR_ALERTS", "0").strip().lower() in (
     "1", "true", "yes", "on")
 # VirusTotal domain reputation for links posted in groups (phishing / malware).
-# Empty = off; the free deceptive-link check (shown site != opened site) runs anyway.
+# Server-wide fallback: a group's own key (/setvtkey) and the operator's shared key
+# (/globalvtkey) come first. Empty and none set = no VirusTotal lookups; the free
+# disguised-link and app-download checks run anyway.
 VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
 # Engines that must call a domain malicious before the bot acts. 1 would let a
 # single noisy engine mute people; 2 is the usual floor for "really bad".

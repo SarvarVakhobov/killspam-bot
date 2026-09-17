@@ -76,9 +76,20 @@ def test_bio_own_channel_invite_link_not_blocked():
     assert _check_bio("https://t.me/joinchat/AbCdEf") is None
 
 
-def test_bio_app_download_link_not_blocked():
-    # Scope is 18+ only: an app link in a bio is not an adult signal.
-    assert _check_bio("Salom! yuklab oling: http://x.site/app.apk") is None
+_APP_REASON = "profile bio links a downloadable app (likely malware)"
+
+
+def test_bio_app_download_link_mutes_not_bans():
+    # An app link in a bio is a common account-stealing lure: caught, but as a soft
+    # reason (24h mute, admin can undo), never a ban.
+    assert _check_bio("Salom! yuklab oling: http://x.site/app.apk") == _APP_REASON
+    assert _check_bio("download: best-app.apk") == _APP_REASON
+    assert _check_bio("https://files.io/setup.exe") == _APP_REASON
+    assert not pc.is_severe(_APP_REASON)
+
+
+def test_bio_explicit_link_outranks_app_link():
+    assert _check_bio("🔞 t.me/xxx_channel app.apk") == "profile bio links to explicit/adult content"
 
 
 _EXPLICIT_REASON = "profile bio links to explicit/adult content"

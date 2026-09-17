@@ -2,7 +2,7 @@
 
 # 🛡️ Spam Protection Bot
 
-**A self-serve Telegram bot that clears 18+ fake accounts and phishing links out of community groups — explicit profile photos and bios, adult spam-bot bait, and links that hide where they really go.**
+**A self-serve Telegram bot that clears 18+ fake accounts, phishing links and app scams out of community groups — explicit profile photos and bios, adult spam-bot bait, malicious and disguised links, .apk/.exe downloads and link floods.**
 
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
@@ -23,24 +23,26 @@ Don't want to host it yourself? **[@spamliman_bot](https://t.me/spamliman_bot)**
 2. Send `/enable` in the group.
 3. Open a private chat with the bot and press **Start**, so it can send you its alerts.
 
-It removes 18+ fake accounts and phishing links, and leaves ordinary conversation, ads and channel links alone. AI moderation on this hosted bot is switched on by its operator.
+It removes 18+ fake accounts, phishing links, app scams and link floods, and leaves ordinary conversation, ads and channel links alone. **It's free for everyone for now.** AI moderation on this hosted bot is switched on by its operator.
 
 ---
 
 ## What it is
 
-A Telegram moderation bot for community groups — IT learning, film discussion and more. Anyone can add it, run `/enable`, and get protection instantly. It is **multi-tenant**: each group can bring its own Google Gemini key (**BYOK**), and the operator can optionally provide one **shared key** for groups that have none. Without any key, the free checks — the local photo scan, explicit-link bios and disguised phishing links — still protect the group.
+A Telegram moderation bot for community groups — IT learning, film discussion and more. Anyone can add it, run `/enable`, and get protection instantly. It is **multi-tenant**: each group can bring its own Google Gemini key (**BYOK**), and the operator can optionally provide one **shared key** for groups that have none. Without any key, the free checks — the local photo scan, explicit-link bios, disguised links, app downloads and link floods — still protect the group.
 
 ## 🎯 What gets blocked — and what doesn't
 
-The bot acts on **two things only**:
+The bot acts on **these things only**:
 
 | Blocked | How it's detected | Action |
 |---|---|---|
 | **18+ fake accounts** | clearly-explicit profile photo (NudeNet, runs locally) · a bio with a link next to explicit terms | ban + delete |
 | | the AI judges a message or bio as sexual content or seductive spam-bot bait | delete + 24h mute |
-| **Phishing links** | the link's visible text is one site but it opens another (`https://gov.uz/…` → `evil.cc`) | delete + 24h mute |
-| | the link's domain is flagged as malicious by VirusTotal engines | delete + 24h mute |
+| **Dangerous links** | the link's domain is flagged as malicious by VirusTotal engines | ban + delete |
+| **Disguised links** | the link's visible text is one site but it opens another (`https://gov.uz/…` → `evil.cc`) | delete + 24h mute |
+| **App downloads** | an attached `.apk`/`.exe` file, a link to one in a message, or an app link in a bio | delete + 24h mute |
+| **Link floods** | the same message with a link from 3+ accounts within 2 minutes | every copy deleted + 24h mute each |
 
 **Not blocked:** ads and promotions, a member's own channel or invite link in their bio (`t.me/+…`), crypto talk, insults, off-topic chatter, film discussion including age ratings. Earlier versions muted people for some of these; those rules were removed.
 
@@ -50,8 +52,9 @@ A **24h mute** keeps the member in the group — they can read but not post — 
 
 - **Multi-tenant, self-serve** — add the bot, `/enable` in the group, done. Each group's own admins receive its alerts.
 - **18+ fake-account detection** — profile photos are checked locally with NudeNet (no cloud call) and ambiguous photos take no action. Bios and messages are judged by the AI layer, which is instructed to flag only sexual content and seductive spam-bot bait.
-- **Phishing-link blocking** — disguised links are caught for free, with no network call. With a VirusTotal API key, each link's real domain (and its parent domain) is checked too. Only the domain is sent, verdicts are cached, and big platforms are never looked up.
-- **AI keys: per group or shared** — `/setkey` stores a group's own Gemini key through a one-time web form, encrypted at rest. The operator can set one shared key for every group without its own (`/globalkey`); a group's own key always wins.
+- **Phishing & app-scam blocking** — disguised links and app downloads (`.apk`/`.exe` files and links) are caught for free, with no network call. With a VirusTotal key, each link's real domain (and its parent domain) is checked too, and a confirmed malicious link bans the sender. Only the domain is sent, verdicts are cached, and big platforms are never looked up.
+- **Link-flood detection** — when several accounts post the same message with a link at once, every copy is deleted and each sender muted, with one alert offering Unmute per account. Messages without a link never count, so identical greetings are safe.
+- **Gemini and VirusTotal keys: per group or shared** — `/setkey` (Gemini) and `/setvtkey` (VirusTotal) store a group's own key through a one-time web form, validated live and encrypted at rest. The operator can set shared keys for every group without its own (`/globalkey`, `/globalvtkey`); a group's own key always wins. Each VirusTotal key has its own daily quota.
 - **Operator AI switch** — `/ai` lists every group with its AI status and turns AI on or off for all groups at once or one by one. Groups added later follow the default.
 - **Operator ban feed** — with `OPERATOR_ALERTS=1`, every ban and mute across all groups is mirrored to the operator's DM, naming the group, the account and the reason.
 - **First-message + join scanning** — profiles are vetted when a member joins and on their first message, so link-joiners in public groups are covered too.
@@ -65,14 +68,16 @@ Every message in a protected group runs through a cheap-to-expensive pipeline; t
 
 1. **Profile scan (once per member)** — on join and on first message.
    - Clearly-explicit photo (NudeNet) or a bio linking explicit content → **ban + delete**.
+   - A bio linking an app file (`.apk`/`.exe`) → 24h mute.
    - Otherwise the bio goes to the AI layer (step 4); an 18+ verdict → 24h mute.
-2. **Phishing-link check** — disguised links first (free), then VirusTotal domain reputation when a key is set. It runs before the AI, so a phishing post never costs a Gemini call.
+2. **Link checks** — app downloads and disguised links first (free → 24h mute), then VirusTotal domain reputation with the group's own key, the operator's shared key or the server's key (confirmed malicious → **ban**). They run before the AI, so such a post never costs a Gemini call.
 3. **Keyword layer (free)** — only keywords a group's admins taught with `/teach`. The seed list blocks nothing on its own.
 4. **AI layer** — runs when AI is switched on for the group (`/ai`) and a key is available: the group's own key, otherwise the operator's shared key. Gemini (`gemini-3.1-flash-lite` by default) judges only 18+ content. Rate-limited as a cost guard.
+5. **Link-flood detector** — the same message with a link from 3+ accounts within 2 minutes → every copy deleted, each sender muted for 24h.
 
 Everything is scoped per group, and the bot stays completely silent in groups that haven't run `/enable`.
 
-**Privacy:** Gemini keys (per group and shared) are encrypted at rest with Fernet. Message text goes to Google Gemini only where AI is on. Link domains go to VirusTotal only when a key is set — never the message itself. Spam-report text and usage rows are purged after 90 days.
+**Privacy:** Gemini and VirusTotal keys (per group and shared) are encrypted at rest with Fernet. Message text goes to Google Gemini only where AI is on. Link domains go to VirusTotal only when a key is set — never the message itself. Spam-report text and usage rows are purged after 90 days.
 
 ## 🛠️ Setup & deployment
 
@@ -104,7 +109,7 @@ Copy `.env.example` to `.env` and fill it in:
 | `GEMINI_MODEL` | ➖ | Gemini model for AI moderation (default `gemini-3.1-flash-lite`). Change it when Google retires a model |
 | `GEMINI_PRICE_IN` / `GEMINI_PRICE_OUT` | ➖ | $/1M tokens for `/tokens` cost estimates (default `0.30` / `2.50`, flash rates — set your model's real rates) |
 | `OPERATOR_ALERTS` | ➖ | `1` mirrors every ban/mute to the operator's DM (default `0`) |
-| `VIRUSTOTAL_API_KEY` | ➖ | Turns on VirusTotal link checks (free key: virustotal.com → profile → API key; 4 lookups/min, 500/day). The disguised-link check runs without it |
+| `VIRUSTOTAL_API_KEY` | ➖ | Server-wide fallback VirusTotal key, used when neither the group (`/setvtkey`) nor the operator (`/globalvtkey`) set one in the bot (free key: virustotal.com → profile → API key; 4 lookups/min and 500/day per key). The disguised-link and app checks run without any key |
 | `VT_MALICIOUS_THRESHOLD` | ➖ | How many engines must flag a domain before the bot acts (default `2`) |
 | `REPORT_HOUR` | ➖ | Local hour (Asia/Tashkent) for the morning report (default `9`) |
 | `MAX_GROUPS_PER_OWNER` | ➖ | Abuse guard: max groups one non-operator may `/enable` (default `20`) |
@@ -122,7 +127,8 @@ python init_db.py && python -m spam_bot.main
 1. Add the bot to your group and make it an **admin** with **Delete messages** + **Ban users**.
 2. Run `/enable` inside the group.
 3. For AI, either run `/setkey` in the group (the group's own Gemini key), or — as the operator — send `/globalkey set` to the bot in a private chat to set a shared key.
-4. As the operator, send `/ai` to choose which groups run AI.
+4. For VirusTotal link checks, run `/setvtkey` in the group, or — as the operator — send `/globalvtkey set`.
+5. As the operator, send `/ai` to choose which groups run AI.
 
 > ⚠️ AI is **on by default** for every group. If you make your bot public with a shared key, groups added by strangers use that key too. Switch the default off in `/ai` and turn AI on only for the groups you choose.
 
@@ -135,11 +141,13 @@ Each release is a git tag (`vX.Y.Z`). To roll back, redeploy the previous tag; t
 |---|---|---|
 | `/enable` · `/disable` | Group admins | Turn protection on/off for the group |
 | `/setkey` | Group admins | Store the group's own Gemini key (private, one-time link) |
+| `/setvtkey` | Group admins | Store the group's own VirusTotal key (private, one-time link) |
 | `/ban` · `/mute` | Group admins | Moderate the replied-to user |
 | `/tokens` | Group admins / operator | Gemini token usage + cost (yesterday / 7d / 30d) |
 | `/stats` | Operator (DM) | Group roster with AI status + spam/ban activity |
 | `/ai` | Operator (DM) | Turn AI on/off for all groups or group by group |
 | `/globalkey` | Operator (DM) | Shared-key status; `set` to add one for keyless groups, `off` to remove it |
+| `/globalvtkey` | Operator (DM) | The same for the shared VirusTotal key |
 | `/help` · `/privacy` | Everyone | Usage guide / data policy |
 
 ## 🧰 Tech stack

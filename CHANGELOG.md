@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 2026-09-17 — 18+ fake accounts and phishing links only; shared AI key and AI switch (1.8.0)
+## 2026-09-17 — 18+ fake accounts, phishing links and app scams; shared keys and AI switch (1.8.0)
 
 ### Fixed
 - AI moderation was silently off for newly issued Gemini keys: `gemini-2.5-flash` returns 404 for them, so only the regex layer ran. The model is now the `GEMINI_MODEL` setting (default `gemini-3.1-flash-lite`).
@@ -13,13 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Real members were muted as "profile bio looks like spam (advertisement)" for listing their own channel's invite link (`t.me/+…`) in their bio.
 
 ### Changed
-- **The bot now blocks only 18+ fake accounts and phishing links.** Removed: the private invite-link and crypto-airdrop rules, the APK/EXE-in-bio ban, and the coordinated-burst ban (the same text from three accounts — identical greetings were enough). Admin-taught `/teach` keywords still apply.
+- **The bot now acts only on 18+ fake accounts, phishing links, app scams and link floods.** The private invite-link and crypto-airdrop rules are gone; admin-taught `/teach` keywords still apply.
+- An app link in a bio (`.apk`/`.exe`) now mutes for 24h instead of banning.
+- The coordinated-burst detector counts only messages that carry a link, and mutes each sender for 24h instead of banning them all permanently — before, three members sending the same greeting were enough to trip it.
 - The AI prompt no longer assumes an IT community; bios linking the member's own channel and film discussion (age ratings included) are explicitly allowed.
 - `/stats` and `/enable` say whether AI actually runs for a group, and why not (switched off vs no key).
 
 ### Added
-- **Phishing links:** a link whose visible text is one site but opens another is deleted and its sender muted 24h, with no key or network call. With `VIRUSTOTAL_API_KEY`, each link's domain is checked with VirusTotal (acts at `VT_MALICIOUS_THRESHOLD`, default 2 engines).
-- **`/globalkey`** (operator): one shared Gemini key for every group without its own; a group's own key always wins.
+- **Phishing links:** a link whose visible text is one site but opens another → deleted, sender muted 24h, no key needed. A link whose domain VirusTotal engines flag as malicious → deleted, sender **banned** (from `VT_MALICIOUS_THRESHOLD` engines, default 2).
+- **App downloads in messages:** an attached `.apk`/`.exe` file or a link to one → deleted, sender muted 24h. Files sent without a caption are checked too.
+- **`/setvtkey`** (group admins) and **`/globalvtkey`** (operator): VirusTotal keys set exactly like Gemini keys — one-time web form, validated live, encrypted at rest. The group's own key comes first, then the shared key, then the server's `VIRUSTOTAL_API_KEY`; each key has its own daily quota.
+- **`/globalkey`** (operator): one shared Gemini key for every group without its own.
 - **`/ai`** (operator): turn AI on/off for all groups at once or one by one; groups added later follow the default.
 - **`OPERATOR_ALERTS=1`:** every ban and mute is mirrored to the operator's DM, naming the group and the account.
 - **Docker deployment:** `Dockerfile`, `docker-compose.yml` and `deploy/` (see `deploy/README.md`).

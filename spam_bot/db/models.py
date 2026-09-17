@@ -76,6 +76,7 @@ class TokenGrant(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime)
     used = Column(Boolean, default=False)
+    kind = Column(String)                  # which key the form sets: "gemini" (NULL) | "vt"
 
 
 class GroupConfig(Base):
@@ -90,6 +91,10 @@ class GroupConfig(Base):
     # Operator AI switch (/ai): True/False forces AI on/off for this group; NULL
     # follows the default, stored on the keys.GLOBAL_SCOPE row (NULL there = on).
     ai_enabled = Column(Boolean)
+    # The group's own VirusTotal key (/setvtkey), kept apart from the Gemini key.
+    vt_key_encrypted = Column(String)
+    vt_key_set_by = Column(BigInteger)
+    vt_key_set_at = Column(DateTime)
 
 
 class TokenUsage(Base):

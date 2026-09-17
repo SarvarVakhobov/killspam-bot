@@ -16,13 +16,14 @@ def _hash(tok: str) -> str:
     return hashlib.sha256(tok.encode()).hexdigest()
 
 
-def mint(chat_id: int, created_by: int) -> str | None:
+def mint(chat_id: int, created_by: int, kind: str = "gemini") -> str | None:
     from ..db.session import SessionLocal
     from ..db.models import TokenGrant
     tok = secrets.token_urlsafe(32)
     try:
         with SessionLocal() as db:
             db.add(TokenGrant(token=_hash(tok), chat_id=chat_id, created_by=created_by,
+                              kind=kind,
                               expires_at=datetime.utcnow() + timedelta(minutes=_TTL_MIN)))
             db.commit()
         return tok  # raw token to the caller; only its hash is persisted
@@ -42,7 +43,8 @@ def validate(tok: str):
         row = db.get(TokenGrant, _hash(tok))
         if not row or row.used or (row.expires_at and row.expires_at < datetime.utcnow()):
             return None
-        return {"token": tok, "chat_id": row.chat_id, "created_by": row.created_by}
+        return {"token": tok, "chat_id": row.chat_id, "created_by": row.created_by,
+                "kind": row.kind or "gemini"}   # NULL: a grant minted before kinds existed
 
 
 def consume(tok: str) -> None:

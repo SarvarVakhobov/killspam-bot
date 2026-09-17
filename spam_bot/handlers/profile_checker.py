@@ -36,11 +36,11 @@ def is_severe(reason) -> bool:
 
 async def check_bio(bot, user_id, group_id=None) -> str | None:
     """Bio-only scan — one get_chat call, no photo downloads. The #1 escape tactic
-    is a clean first message with the 18+ payload in the bio. A link next to
-    explicit terms is a hard block. A bio that merely links the member's own
-    channel or site is normal: it goes to the AI, which judges only 18+ content and
-    runs only where AI is switched on and a key exists. Cheap enough to run on a
-    sender's first message, not just at join."""
+    is a clean first message with the payload in the bio. A link next to explicit
+    terms is a hard block (ban); a link to an app file (.apk/.exe) mutes. A bio that
+    merely links the member's own channel or site is normal: it goes to the AI,
+    which judges only 18+ content and runs only where AI is switched on and a key
+    exists. Cheap enough to run on a sender's first message, not just at join."""
     try:
         bio = (await bot.get_chat(user_id)).bio or ""
     except Exception:
@@ -49,6 +49,8 @@ async def check_bio(bot, user_id, group_id=None) -> str | None:
         return None
     if patterns.has_explicit_link(bio):
         return "profile bio links to explicit/adult content"
+    if patterns.has_malware_link(bio):
+        return "profile bio links a downloadable app (likely malware)"
     reason = classify_spam(bio, group_id=group_id)
     if reason:
         return f"profile bio flagged ({reason})"

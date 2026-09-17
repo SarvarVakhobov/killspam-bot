@@ -271,6 +271,29 @@ async def notify_admins(bot, message: Message, reason: str, user_type: str) -> N
     ), reply_markup=action_keyboard(message.chat.id, message.from_user.id))
 
 
+async def notify_admins_burst(bot, message: Message, reason: str, actioned: list,
+                              banned: bool = False) -> None:
+    """One alert for a coordinated link flood instead of one per account. Every
+    copy is already deleted. Muted senders get an Unmute button each; banned ones
+    (a VirusTotal-confirmed link) are listed without one."""
+    text = message.text or message.caption or "No text"
+    if len(text) > 200:
+        text = text[:200] + "..."
+    rows = [] if banned else [
+        [InlineKeyboardButton(text=f"✅ Unmute: {_short(name or str(uid))}",
+                              callback_data=f"act:unmute:{message.chat.id}:{uid}")]
+        for uid, name in actioned[:10]]
+    action = "senders banned" if banned else "senders muted for 24h"
+    await notify_group(bot, message.chat.id, (
+        f"🚨 LINK FLOOD 🚨\n\n"
+        f"💬 Group: {message.chat.title or message.chat.id}\n"
+        f"📊 {len(actioned)} accounts sent the same message — every copy deleted, {action}.\n"
+        f"📝 Reason: {reason}\n"
+        f"📄 Message: {text}\n"
+        f"⏰ {datetime.now():%Y-%m-%d %H:%M:%S}"
+    ), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None)
+
+
 # --- Admin teaching flow: forward spam -> pick keywords -> learn ---------------
 # ponytail: in-memory, single-process. Pending proposals are lost on restart;
 # approved patterns persist in the DB. Add Redis only if you run multiple workers.
@@ -575,38 +598,44 @@ async def on_lp_action(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
+# kind -> the group command that sets it, and its display name
+_KEY_KIND_COMMANDS = {"gemini": "setkey", "vt": "setvtkey"}
+_KEY_KIND_NAMES = {"gemini": "Gemini", "vt": "VirusTotal"}
+
+
 @router.message(Command("start"))
 async def handle_start(message: Message, command: CommandObject) -> None:
     payload = command.args or ""
-    if payload.startswith("setkey-"):
-        try:
-            chat_id = int(payload[len("setkey-"):])
-        except ValueError:
-            chat_id = None
-        if chat_id is not None:
-            await _start_setkey(message, chat_id)
+    for kind, cmd in _KEY_KIND_COMMANDS.items():
+        prefix = f"{cmd}-"
+        if payload.startswith(prefix):
+            try:
+                chat_id = int(payload[len(prefix):])
+            except ValueError:
+                break
+            await _start_setkey(message, chat_id, kind)
             return
     await message.reply(copy.START_TEXT, disable_web_page_preview=True)
 
 
-async def _start_setkey(message: Message, chat_id: int) -> None:
-    """Deep-link landing (private chat): an admin tapped the group's 'Set up AI
-    key' button. Verify they administer that group, then DM the key-entry link
-    and remove the group prompt."""
+async def _start_setkey(message: Message, chat_id: int, kind: str = "gemini") -> None:
+    """Deep-link landing (private chat): an admin tapped the group's 'Set up key'
+    button. Verify they administer that group, then DM the key-entry link and
+    remove the group prompt."""
     from ..core import keys
     user_id = message.from_user.id
-    # The shared-key scope belongs to /globalkey alone; a hand-built deep link
-    # (?start=setkey-0) must never reach it through the group path.
+    # The shared-key scope belongs to /globalkey and /globalvtkey alone; a
+    # hand-built deep link (?start=setkey-0) must never reach it through here.
     if chat_id == keys.GLOBAL_SCOPE or not groups.is_allowed(chat_id):
         await message.reply("That group isn't protected yet — run /enable there first.")
         return
     if user_id not in await _group_admin_ids(message.bot, chat_id) and not _is_admin(user_id):
-        await message.reply("Only an admin of that group can set its AI key.")
+        await message.reply(f"Only an admin of that group can set its {_KEY_KIND_NAMES[kind]} key.")
         return
-    if not await _deliver_setkey_link(message.bot, chat_id, user_id):
-        await message.reply("Couldn't send the setup link — try /setkey again.")
+    if not await _deliver_setkey_link(message.bot, chat_id, user_id, kind=kind):
+        await message.reply(f"Couldn't send the setup link — try /{_KEY_KIND_COMMANDS[kind]} again.")
         return
-    pid = _setkey_prompts.pop(chat_id, None)  # clean up the group button
+    pid = _setkey_prompts.pop((chat_id, kind), None)  # clean up the group button
     if pid:
         try:
             await message.bot.delete_message(chat_id, pid)
@@ -616,7 +645,8 @@ async def _start_setkey(message: Message, chat_id: int) -> None:
 
 @router.message(Command("help"))
 async def handle_help(message: Message) -> None:
-    await message.reply(copy.HELP_TEXT, disable_web_page_preview=True)
+    for part in copy.HELP_PARTS:
+        await message.reply(part, disable_web_page_preview=True)
 
 
 @router.message(Command("privacy"))
@@ -668,10 +698,23 @@ async def handle_globalkey_command(message: Message, command: CommandObject) -> 
       /globalkey off    remove it — keyless groups drop back to regex-only
     Entered on the web form, never in chat: a bot can't delete a user's message in
     a private chat, so a pasted key would sit in Telegram history for good."""
+    await _shared_key_command(message, command, "gemini")
+
+
+@router.message(Command("globalvtkey"))
+async def handle_globalvtkey_command(message: Message, command: CommandObject) -> None:
+    """Operator-only (private DM): /globalkey for the VirusTotal key that link
+    checks use in groups without a /setvtkey key of their own."""
+    await _shared_key_command(message, command, "vt")
+
+
+async def _shared_key_command(message: Message, command: CommandObject, kind: str) -> None:
     from ..core import ai_settings, crypto, keys
-    from ..core.config import BASE_URL
+    from ..core.config import BASE_URL, VIRUSTOTAL_API_KEY
+    cmd = "globalkey" if kind == "gemini" else "globalvtkey"
+    name = _KEY_KIND_NAMES[kind]
     if message.chat.type in ("group", "supergroup"):
-        await delete_command(message)   # never discuss the shared key in a group
+        await delete_command(message)   # never discuss a shared key in a group
         return
     if not message.from_user or not _is_admin(message.from_user.id):
         await message.reply("This command is for the bot operator.")
@@ -683,37 +726,52 @@ async def handle_globalkey_command(message: Message, command: CommandObject) -> 
             await message.reply("⚠️ Kalit saqlash sozlanmagan: KEY_ENCRYPTION_SECRET va BASE_URL kerak.")
             return
         if not await _deliver_setkey_link(message.bot, keys.GLOBAL_SCOPE, message.from_user.id,
-                                          what="the shared Gemini key for all groups"):
+                                          what=f"the shared {name} key for all groups", kind=kind):
             await message.reply("Havolani yuborib bo'lmadi — qayta urinib ko'ring.")
         return
 
+    ids = groups.allowed_ids()
+    if kind == "gemini":
+        # Only groups with AI switched on (/ai) actually spend the shared key.
+        users = sum(1 for cid in ids if not keys.has_key(cid) and ai_settings.is_enabled(cid))
+        users_note = "qolganlarida o'z kaliti bor yoki AI o'chirilgan"
+        without = "faqat regex bilan ishlaydi"
+    else:
+        users = sum(1 for cid in ids if not keys.has_key(cid, "vt"))
+        users_note = "qolganlarida o'z kaliti bor"
+        without = ("serverdagi .env kalitidan foydalanadi" if VIRUSTOTAL_API_KEY
+                   else "havolalarni VirusTotal'siz tekshiradi")
+
     if arg == "off":
-        if keys.delete_key(keys.GLOBAL_SCOPE):
-            await message.reply("🗑 Umumiy kalit o'chirildi. O'z kaliti yo'q guruhlar endi faqat regex bilan ishlaydi.")
+        if keys.delete_key(keys.GLOBAL_SCOPE, kind):
+            await message.reply(f"🗑 Umumiy {name} kaliti o'chirildi. O'z kaliti yo'q guruhlar endi {without}.")
         else:
-            await message.reply("Umumiy kalit o'rnatilmagan edi.")
+            await message.reply(f"Umumiy {name} kaliti o'rnatilmagan edi.")
         return
 
-    ids = groups.allowed_ids()
-    # Only groups with AI switched on (/ai) actually spend the shared key.
-    keyless = sum(1 for cid in ids if not keys.has_key(cid) and ai_settings.is_enabled(cid))
-    info = keys.key_info(keys.GLOBAL_SCOPE)
+    info = keys.key_info(keys.GLOBAL_SCOPE, kind)
     if info:
         by, at = info
         when = f"{at:%Y-%m-%d %H:%M} UTC" if at else "?"
-        status = (f"🔑 Umumiy Gemini kaliti: YOQILGAN\n"
+        status = (f"🔑 Umumiy {name} kaliti: YOQILGAN\n"
                   f"O'rnatgan: {by}, {when}\n"
-                  f"Ishlatayotgan guruhlar: {keyless} / {len(ids)} (qolganlarida o'z kaliti bor yoki AI o'chirilgan)")
+                  f"Ishlatayotgan guruhlar: {users} / {len(ids)} ({users_note})")
     else:
-        status = (f"🔑 Umumiy Gemini kaliti: O'CHIQ\n"
-                  f"AI yoqilgan, lekin kaliti yo'q guruhlar: {keyless} / {len(ids)}")
-    await message.reply(
-        f"{status}\n\n"
-        "/globalkey set — o'rnatish yoki almashtirish (bir martalik havola)\n"
-        "/globalkey off — o'chirish\n"
-        "/ai — qaysi guruhlarda AI ishlashini tanlash\n\n"
-        "⚠️ /enable ni istalgan guruh admini qila oladi — shunday har bir guruhning "
-        "AI'si shu kalit hisobidan ishlaydi. Guruhlar bo'yicha sarfni /tokens da ko'rasiz.")
+        status = (f"🔑 Umumiy {name} kaliti: O'CHIQ\n"
+                  f"O'z kaliti yo'q guruhlar: {users} / {len(ids)} — ular {without}")
+    if kind == "vt" and VIRUSTOTAL_API_KEY:
+        status += "\nZaxira: serverdagi .env faylida ham VirusTotal kaliti bor."
+
+    tips = [f"/{cmd} set — o'rnatish yoki almashtirish (bir martalik havola)",
+            f"/{cmd} off — o'chirish"]
+    if kind == "gemini":
+        tips.append("/ai — qaysi guruhlarda AI ishlashini tanlash")
+        warn = ("⚠️ /enable ni istalgan guruh admini qila oladi — o'z kaliti yo'q har bir guruhning "
+                "AI'si shu kalit hisobidan ishlaydi. Guruhlar bo'yicha sarfni /tokens da ko'rasiz.")
+    else:
+        warn = ("⚠️ VirusTotal'ning bepul limiti bitta kalit uchun kuniga 500 so'rov. Guruhlar "
+                "ko'paysa, ular /setvtkey bilan o'z kalitini qo'shgani ma'qul.")
+    await message.reply(f"{status}\n\n" + "\n".join(tips) + f"\n\n{warn}")
 
 
 # --- Operator AI switch (/ai) ---------------------------------------------------
@@ -878,7 +936,7 @@ async def handle_disable(message: Message) -> None:
 
 
 # Key-setup helpers ------------------------------------------------------------
-_setkey_prompts: dict = {}  # chat_id -> group-prompt message_id (cleaned up on use)
+_setkey_prompts: dict = {}  # (chat_id, kind) -> group-prompt message_id (cleaned up on use)
 _bot_uname: list = []       # cache for the bot's @username
 
 
@@ -888,16 +946,18 @@ async def _bot_username(bot) -> str:
     return _bot_uname[0]
 
 
-async def _deliver_setkey_link(bot, chat_id: int, user_id: int,
-                               what: str = "the group's Gemini key") -> bool:
+async def _deliver_setkey_link(bot, chat_id: int, user_id: int, what: str = None,
+                               kind: str = "gemini") -> bool:
     """Mint a one-time token for chat_id and DM the key-entry link to user_id.
     Returns False only if the DM itself couldn't be sent (user hasn't started me)."""
     from ..core import tokens
     from ..core.config import BASE_URL
-    tok = tokens.mint(chat_id, user_id)
+    what = what or f"the group's {_KEY_KIND_NAMES[kind]} key"
+    tok = tokens.mint(chat_id, user_id, kind)
     if not tok:
         try:
-            await bot.send_message(user_id, "Couldn't create a setup link — try /setkey again.")
+            await bot.send_message(
+                user_id, f"Couldn't create a setup link — try /{_KEY_KIND_COMMANDS[kind]} again.")
         except Exception:
             return False
         return True
@@ -914,6 +974,18 @@ async def _deliver_setkey_link(bot, chat_id: int, user_id: int,
 
 @router.message(Command("setkey"))
 async def handle_setkey_command(message: Message) -> None:
+    """Group admins: store the group's own Gemini key (AI moderation)."""
+    await _setkey_flow(message, "gemini")
+
+
+@router.message(Command("setvtkey"))
+async def handle_setvtkey_command(message: Message) -> None:
+    """Group admins: store the group's own VirusTotal key, so its link checks don't
+    share the operator's daily VirusTotal quota."""
+    await _setkey_flow(message, "vt")
+
+
+async def _setkey_flow(message: Message, kind: str) -> None:
     """Group-only and kept PRIVATE. Deletes the command on sight (no copycats).
     If I can already DM the admin, the link goes straight to their DM and nothing
     is posted in the group. If I can't DM them yet, I post ONE clean inline button
@@ -921,46 +993,47 @@ async def handle_setkey_command(message: Message) -> None:
     the button. Non-admins / copycats are silently deleted."""
     from ..core import crypto
     from ..core.config import BASE_URL
+    cmd, name = _KEY_KIND_COMMANDS[kind], _KEY_KIND_NAMES[kind]
 
     if message.chat.type not in ("group", "supergroup"):
-        await message.reply("Use /setkey inside the group you want to protect.")
+        await message.reply(f"Use /{cmd} inside the group you want to protect.")
         return
 
     try:
         await message.bot.delete_message(message.chat.id, message.message_id)
     except Exception as e:
-        logging.info(f"couldn't delete /setkey command in {message.chat.id}: {e}")
+        logging.info(f"couldn't delete /{cmd} command in {message.chat.id}: {e}")
 
     if not groups.is_allowed(message.chat.id):
         return
     if not message.from_user or not await _is_group_admin(message):
         return  # copycat / non-admin: command already deleted, stay silent
-    if not _setkey_limit.allow(message.from_user.id):
+    if not _setkey_limit.allow((message.from_user.id, kind)):
         return
 
     if not crypto.available() or not BASE_URL:
         try:
             await message.bot.send_message(
                 message.from_user.id,
-                "⚠️ AI key setup isn't configured on this bot yet. Contact the operator.")
+                f"⚠️ {name} key setup isn't configured on this bot yet. Contact the operator.")
         except Exception:
             pass
         return
 
     # Admin already started me -> deliver privately, nothing in the group.
-    if await _deliver_setkey_link(message.bot, message.chat.id, message.from_user.id):
+    if await _deliver_setkey_link(message.bot, message.chat.id, message.from_user.id, kind=kind):
         return
 
     # Can't DM yet: post one clean deep-link button to open our private chat.
     uname = await _bot_username(message.bot)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text="🔑 Set up AI key (private)",
-        url=f"https://t.me/{uname}?start=setkey-{message.chat.id}")]])
+        text=f"🔑 Set up {name} key (private)",
+        url=f"https://t.me/{uname}?start={cmd}-{message.chat.id}")]])
     sent = await message.answer(
-        f"{message.from_user.first_name}, tap to set this group's AI key — "
+        f"{message.from_user.first_name}, tap to set this group's {name} key — "
         f"it opens a private chat with me, and this message will disappear.",
         reply_markup=kb)
-    _setkey_prompts[message.chat.id] = sent.message_id
+    _setkey_prompts[(message.chat.id, kind)] = sent.message_id
 
 
 async def _moderation_target(message: Message, usage: str):
@@ -1095,7 +1168,7 @@ async def handle_flag_command(message: Message) -> None:
 # --- User reports: reply with JUST "spam"/"ban"/"admin" (or /report) -----------
 # Must be a standalone trigger word so normal sentences that merely mention
 # "ban"/"admin" don't fire a bogus report.
-_setkey_limit = RateLimiter(limit=3, window=3600.0)  # per admin / hour
+_setkey_limit = RateLimiter(limit=3, window=3600.0)  # per (admin, key kind) / hour
 
 _REPORT_WORDS = {"spam", "ban", "admin", "report", "shikoyat", "спам", "бан", "админ", "жалоба"}
 _report_limit = RateLimiter(limit=3, window=60.0)  # per reporter / minute

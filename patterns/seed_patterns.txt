@@ -3,8 +3,8 @@
 # Lines starting with # are comments. [section] headers group by category.
 #
 # SCOPE: the bot blocks 18+ content (the AI layer, the local NudeNet photo scan
-# and the explicit-link bio check in core/patterns.py) and phishing links
-# (core/linkcheck.py).
+# and the explicit-link bio check in core/patterns.py), phishing links and app
+# downloads (core/linkcheck.py) and link floods (handlers/spam_detector.py).
 # Nothing in this file blocks automatically any more. The [ads] rules that lived
 # here (private t.me/+ invite links, crypto-airdrop wording) muted real members
 # for listing their own channel in their bio, so they were removed. Do NOT add

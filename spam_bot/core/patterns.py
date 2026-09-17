@@ -18,6 +18,19 @@ _HOMOGLYPHS = str.maketrans({
 
 _URL_RE = re.compile(r'(?:https?://|t\.me/|@)\S+')
 
+# App and program files: a link to one in a *bio* ("yuklab oling: app.apk") is a
+# classic account-stealing lure. It mutes for 24h rather than bans — a real member
+# can link a genuine installer too. Plain links, t.me channels and @handles are
+# deliberately NOT matched.
+APP_EXTENSIONS = (".apk", ".xapk", ".apks", ".exe", ".msi", ".dmg", ".bat", ".scr")
+_BIO_MALWARE_RE = re.compile(r'\b[\w-]+\.(?:apk|xapk|apks|exe|msi|dmg|bat|scr)\b', re.IGNORECASE)
+
+
+def has_malware_link(text: str) -> bool:
+    """True if a bio names an app/program file (APK/EXE/...)."""
+    return bool(text) and bool(_BIO_MALWARE_RE.search(text))
+
+
 # Any link or handle (incl. bare domains like onlyfans.com). Used only paired with
 # the adult check below, so a benign "node.js" or "t.me/python_uz" never blocks alone.
 _LINK_RE = re.compile(r'https?://|t\.me/|@\w{3,}|\b[\w-]+\.[a-z]{2,}(?:/|\b)', re.IGNORECASE)
@@ -37,6 +50,11 @@ def has_explicit_link(text: str) -> bool:
     porn/escort/'hot' content behind a t.me or web link. Both must be present, so
     a clean channel link or a link-less message won't trip it."""
     return bool(text) and bool(_ADULT_RE.search(text)) and bool(_LINK_RE.search(text))
+
+
+def has_link(text: str) -> bool:
+    """True if text contains a link, a bare domain or an @handle."""
+    return bool(text) and bool(_LINK_RE.search(text))
 
 _seed: dict = {}      # category -> [compiled regex]
 _learned: dict = {}   # group_id_or_None -> {category: [normalized keyword]}
