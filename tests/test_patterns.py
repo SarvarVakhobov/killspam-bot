@@ -7,19 +7,16 @@ def test_normalize_folds_cyrillic_homoglyphs():
     assert patterns.normalize("ZАRАBОTОK") == "zarabotok"
 
 
-def test_seed_regex_flags_high_signal_links_only():
-    # High-signal: private invite links still flag as ads.
-    assert patterns.classify("join here t.me/+AbCdEf") == "advertisement"
-    # v1.7.0 scope: generic promo vocabulary no longer flags (it blocked normal talk).
-    assert patterns.classify("Сегодня большая скидка!") is None      # "big discount today"
-    assert patterns.classify("я работаю программистом") is None       # "I work as a programmer"
-    assert patterns.classify("how do I fix this python bug?") is None
-
-
-def test_seed_regex_catches_crypto_airdrop():
-    assert patterns.classify("🪙🪙🪙 Free Solana Case Drop — open yours now") == "advertisement"
-    assert patterns.classify("claim your free crypto reward today") == "advertisement"
-    assert patterns.classify("anyone built a Solana program in Rust?") is None
+def test_seed_rules_block_nothing_outside_18_plus():
+    # Scope: only 18+ content blocks automatically. The private-invite-link rule
+    # muted real members for listing their own channel in their bio, so the [ads]
+    # seed is empty — links, promo wording and crypto talk all pass the regex layer.
+    for msg in ("Kanalim: t.me/+AbCdEf12", "https://t.me/joinchat/AbCdEf",
+                "🪙🪙🪙 Free Solana Case Drop — open yours now",
+                "claim your free crypto reward today",
+                "Сегодня большая скидка!", "я работаю программистом",
+                "how do I fix this python bug?"):
+        assert patterns.classify(msg) is None, msg
 
 
 def test_harmless_messages_are_not_flagged():

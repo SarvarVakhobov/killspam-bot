@@ -271,22 +271,6 @@ async def notify_admins(bot, message: Message, reason: str, user_type: str) -> N
     ), reply_markup=action_keyboard(message.chat.id, message.from_user.id))
 
 
-async def notify_admins_burst(bot, message: Message, reason: str, count: int) -> None:
-    """One alert for a coordinated burst (vs one-per-account). Everyone in the
-    cohort is already deleted & banned, so no per-user action buttons."""
-    text = message.text or message.caption or "No text"
-    if len(text) > 200:
-        text = text[:200] + "..."
-    await notify_group(bot, message.chat.id, (
-        f"🚨 COORDINATED SPAM 🚨\n\n"
-        f"💬 Group: {message.chat.title or message.chat.id}\n"
-        f"📊 {count} accounts sent the same message — all deleted & banned.\n"
-        f"📝 Reason: {reason}\n"
-        f"📄 Message: {text}\n"
-        f"⏰ {datetime.now():%Y-%m-%d %H:%M:%S}"
-    ))
-
-
 # --- Admin teaching flow: forward spam -> pick keywords -> learn ---------------
 # ponytail: in-memory, single-process. Pending proposals are lost on restart;
 # approved patterns persist in the DB. Add Redis only if you run multiple workers.
@@ -609,8 +593,11 @@ async def _start_setkey(message: Message, chat_id: int) -> None:
     """Deep-link landing (private chat): an admin tapped the group's 'Set up AI
     key' button. Verify they administer that group, then DM the key-entry link
     and remove the group prompt."""
+    from ..core import keys
     user_id = message.from_user.id
-    if not groups.is_allowed(chat_id):
+    # The shared-key scope belongs to /globalkey alone; a hand-built deep link
+    # (?start=setkey-0) must never reach it through the group path.
+    if chat_id == keys.GLOBAL_SCOPE or not groups.is_allowed(chat_id):
         await message.reply("That group isn't protected yet — run /enable there first.")
         return
     if user_id not in await _group_admin_ids(message.bot, chat_id) and not _is_admin(user_id):
@@ -672,6 +659,163 @@ async def handle_stats_command(message: Message) -> None:
     await message.reply(stats.report(titles))
 
 
+@router.message(Command("globalkey"))
+async def handle_globalkey_command(message: Message, command: CommandObject) -> None:
+    """Operator-only (private DM): one shared Gemini key for every protected group
+    without a key of its own; a group's /setkey key always wins over it.
+      /globalkey        status
+      /globalkey set    DM a one-time link to the key form (the /setkey form)
+      /globalkey off    remove it — keyless groups drop back to regex-only
+    Entered on the web form, never in chat: a bot can't delete a user's message in
+    a private chat, so a pasted key would sit in Telegram history for good."""
+    from ..core import ai_settings, crypto, keys
+    from ..core.config import BASE_URL
+    if message.chat.type in ("group", "supergroup"):
+        await delete_command(message)   # never discuss the shared key in a group
+        return
+    if not message.from_user or not _is_admin(message.from_user.id):
+        await message.reply("This command is for the bot operator.")
+        return
+    arg = (command.args or "").strip().lower()
+
+    if arg == "set":
+        if not crypto.available() or not BASE_URL:
+            await message.reply("⚠️ Kalit saqlash sozlanmagan: KEY_ENCRYPTION_SECRET va BASE_URL kerak.")
+            return
+        if not await _deliver_setkey_link(message.bot, keys.GLOBAL_SCOPE, message.from_user.id,
+                                          what="the shared Gemini key for all groups"):
+            await message.reply("Havolani yuborib bo'lmadi — qayta urinib ko'ring.")
+        return
+
+    if arg == "off":
+        if keys.delete_key(keys.GLOBAL_SCOPE):
+            await message.reply("🗑 Umumiy kalit o'chirildi. O'z kaliti yo'q guruhlar endi faqat regex bilan ishlaydi.")
+        else:
+            await message.reply("Umumiy kalit o'rnatilmagan edi.")
+        return
+
+    ids = groups.allowed_ids()
+    # Only groups with AI switched on (/ai) actually spend the shared key.
+    keyless = sum(1 for cid in ids if not keys.has_key(cid) and ai_settings.is_enabled(cid))
+    info = keys.key_info(keys.GLOBAL_SCOPE)
+    if info:
+        by, at = info
+        when = f"{at:%Y-%m-%d %H:%M} UTC" if at else "?"
+        status = (f"🔑 Umumiy Gemini kaliti: YOQILGAN\n"
+                  f"O'rnatgan: {by}, {when}\n"
+                  f"Ishlatayotgan guruhlar: {keyless} / {len(ids)} (qolganlarida o'z kaliti bor yoki AI o'chirilgan)")
+    else:
+        status = (f"🔑 Umumiy Gemini kaliti: O'CHIQ\n"
+                  f"AI yoqilgan, lekin kaliti yo'q guruhlar: {keyless} / {len(ids)}")
+    await message.reply(
+        f"{status}\n\n"
+        "/globalkey set — o'rnatish yoki almashtirish (bir martalik havola)\n"
+        "/globalkey off — o'chirish\n"
+        "/ai — qaysi guruhlarda AI ishlashini tanlash\n\n"
+        "⚠️ /enable ni istalgan guruh admini qila oladi — shunday har bir guruhning "
+        "AI'si shu kalit hisobidan ishlaydi. Guruhlar bo'yicha sarfni /tokens da ko'rasiz.")
+
+
+# --- Operator AI switch (/ai) ---------------------------------------------------
+
+_AI_STATUS = {
+    "own": ("✅", "AI ishlayapti (guruhning o'z kaliti)"),
+    "global": ("✅", "AI ishlayapti (umumiy kalit)"),
+    "nokey": ("⚠️", "yoqilgan, lekin kalit yo'q — ishlamayapti"),
+    "off": ("⛔", "AI o'chirilgan"),
+}
+
+
+def _short(title: str, limit: int = 28) -> str:
+    return title if len(title) <= limit else title[: limit - 1] + "…"
+
+
+async def _ai_panel(bot) -> tuple:
+    """The /ai view: the default, the shared-key state, and one status line plus
+    one toggle button per protected group."""
+    from ..core import ai_settings, keys
+    ids = sorted(groups.allowed_ids())
+    titles = await stats.resolve_titles(bot, ids)
+    statuses = {cid: ai_settings.status(cid) for cid in ids}
+    default = "✅ yoqilgan" if ai_settings.default_enabled() else "⛔ o'chirilgan"
+    shared = "🔑 o'rnatilgan" if keys.get_global_key() else "❌ yo'q (/globalkey set)"
+    lines = [
+        "🤖 AI moderatsiya — faqat 18+ kontentni tekshiradi",
+        f"Standart: {default} — yangi guruhlar shunga ergashadi",
+        f"Umumiy kalit: {shared}",
+        "",
+    ]
+    rows = []
+    if not ids:
+        lines.append("Hali himoyalangan guruh yo'q.")
+    for cid in ids:
+        icon, label = _AI_STATUS[statuses[cid]]
+        title = titles.get(cid, str(cid))
+        lines.append(f"{icon} {title} — {label}")
+        action = "✅ Yoqish" if statuses[cid] == "off" else "⛔ O'chirish"
+        rows.append([InlineKeyboardButton(
+            text=f"{action}: {_short(title)}", callback_data=f"ai:g:{cid}")])
+    rows.append([
+        InlineKeyboardButton(text="✅ Hammasida yoqish", callback_data="ai:all:1"),
+        InlineKeyboardButton(text="⛔ Hammasida o'chirish", callback_data="ai:all:0"),
+    ])
+    if "nokey" in statuses.values():
+        lines += ["", "⚠️ Kaliti yo'q guruhlarda AI yoqilgan bo'lsa ham ishlamaydi. "
+                      "Umumiy kalit o'rnatish: /globalkey set"]
+    lines += ["", "AI o'chirilgan guruhlarda ham aniq 18+ profil rasmlari va "
+                  "18+ havolali bio'lar tekshirilaveradi."]
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("ai"))
+async def handle_ai_command(message: Message) -> None:
+    """Operator-only (private DM): choose where the paid AI layer runs — every
+    group at once, or group by group. Groups enabled later follow the default."""
+    if message.chat.type in ("group", "supergroup"):
+        await delete_command(message)
+        return
+    if not message.from_user or not _is_admin(message.from_user.id):
+        await message.reply("This command is for the bot operator.")
+        return
+    text, kb = await _ai_panel(message.bot)
+    await message.reply(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("ai:"))
+async def on_ai_toggle(cb: CallbackQuery) -> None:
+    from ..core import ai_settings
+    if not _is_admin(cb.from_user.id):
+        await cb.answer("Not authorized.")
+        return
+    parts = cb.data.split(":")
+    try:
+        if parts[1] == "all":
+            on = parts[2] == "1"
+            ai_settings.set_all(on)
+            note = "AI hammasida yoqildi" if on else "AI hammasida o'chirildi"
+        elif parts[1] == "g":
+            chat_id = int(parts[2])
+            on = not ai_settings.is_enabled(chat_id)
+            ai_settings.set_group(chat_id, on)
+            note = "Yoqildi" if on else "O'chirildi"
+        else:
+            await cb.answer()
+            return
+    except (IndexError, ValueError):
+        await cb.answer()
+        return
+    except Exception as e:
+        logging.error(f"/ai toggle failed ({cb.data}): {e}")
+        await cb.answer("Saqlab bo'lmadi — qayta urinib ko'ring.", show_alert=True)
+        return
+    text, kb = await _ai_panel(cb.bot)
+    try:
+        await cb.message.edit_text(text, reply_markup=kb)
+    except Exception as e:
+        logging.info(f"/ai panel refresh skipped: {e}")   # e.g. "message is not modified"
+    await cb.answer(note)
+
+
 _NOT_AUTHORIZED = "❌ Only group admins can use this."
 
 
@@ -702,11 +846,20 @@ async def handle_enable(message: Message) -> None:
         await delete_command(message)
         return
     groups.enable(message.chat.id, owner)
-    await reply_temp(
-        message,
-        "✅ This group is now protected.\n\n"
-        "AI detection is off until an admin runs /setkey with a Gemini key — keyword rules are already active."
-    )
+    from ..core import ai_settings, keys
+    src = keys.key_source(message.chat.id)
+    if not ai_settings.is_enabled(message.chat.id):
+        ai_line = ("AI detection is switched off for this group by the bot operator. "
+                   "Explicit profile photos and explicit bio links are still checked.")
+    elif src == "own":
+        ai_line = "AI detection is on with this group's own Gemini key."
+    elif src == "global":
+        ai_line = ("AI detection is on (the bot operator's shared key). An admin can run "
+                   "/setkey to use the group's own Gemini key instead.")
+    else:
+        ai_line = ("AI detection is off until an admin runs /setkey with a Gemini key — "
+                   "keyword rules are already active.")
+    await reply_temp(message, "✅ This group is now protected.\n\n" + ai_line)
     await delete_command(message)
 
 
@@ -735,7 +888,8 @@ async def _bot_username(bot) -> str:
     return _bot_uname[0]
 
 
-async def _deliver_setkey_link(bot, chat_id: int, user_id: int) -> bool:
+async def _deliver_setkey_link(bot, chat_id: int, user_id: int,
+                               what: str = "the group's Gemini key") -> bool:
     """Mint a one-time token for chat_id and DM the key-entry link to user_id.
     Returns False only if the DM itself couldn't be sent (user hasn't started me)."""
     from ..core import tokens
@@ -751,7 +905,7 @@ async def _deliver_setkey_link(bot, chat_id: int, user_id: int) -> bool:
     try:
         await bot.send_message(
             user_id,
-            f"🔑 Open this link to set the group's Gemini key (valid 15 min, one-time):\n{link}",
+            f"🔑 Open this link to set {what} (valid 15 min, one-time):\n{link}",
             disable_web_page_preview=True)
         return True
     except Exception:

@@ -18,21 +18,6 @@ _HOMOGLYPHS = str.maketrans({
 
 _URL_RE = re.compile(r'(?:https?://|t\.me/|@)\S+')
 
-# A downloadable binary in a Telegram *bio* is the hard malware signal — almost
-# no legit user links an APK/EXE from their profile. Plain http links, t.me/
-# channels, and @handles are deliberately NOT matched here: many real users list
-# their own channel or site, so those are left to the keyword/AI bio classifier
-# (which can tell a course channel from a spam funnel). ponytail: extend the
-# extension list if spammers switch payloads (e.g. .ipa).
-_BIO_MALWARE_RE = re.compile(r'\b[\w-]+\.(?:apk|xapk|apks|exe|msi|dmg|bat|scr)\b', re.IGNORECASE)
-
-
-def has_malware_link(text: str) -> bool:
-    """True if text links a downloadable binary (APK/EXE/...) — the malware-in-bio
-    tactic. Does NOT match plain links/channels, which are often legitimate."""
-    return bool(text) and bool(_BIO_MALWARE_RE.search(text))
-
-
 # Any link or handle (incl. bare domains like onlyfans.com). Used only paired with
 # the adult check below, so a benign "node.js" or "t.me/python_uz" never blocks alone.
 _LINK_RE = re.compile(r'https?://|t\.me/|@\w{3,}|\b[\w-]+\.[a-z]{2,}(?:/|\b)', re.IGNORECASE)

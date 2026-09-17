@@ -69,20 +69,16 @@ def _check_bio(bio):
     return asyncio.run(pc.check_profile(_BioBot(bio), SimpleNamespace(id=1), group_id=None))
 
 
-_MALWARE_REASON = "profile bio links a downloadable app (likely malware)"
+def test_bio_own_channel_invite_link_not_blocked():
+    # Regression (2026-09-16): three real members were muted for listing their own
+    # channel's private invite link in their bio. A link alone never blocks now.
+    assert _check_bio("Kanalim 👉 t.me/+AbCdEf12") is None
+    assert _check_bio("https://t.me/joinchat/AbCdEf") is None
 
 
-def test_bio_apk_link_is_caught():
-    # The reported tactic: benign account, harmful APK link in the bio.
-    assert _check_bio("Salom! yuklab oling: http://x.site/app.apk") == _MALWARE_REASON
-
-
-def test_bio_schemeless_apk_link_is_caught():
-    assert _check_bio("download: best-app.apk") == _MALWARE_REASON
-
-
-def test_bio_exe_link_is_caught():
-    assert _check_bio("https://files.io/setup.exe") == _MALWARE_REASON
+def test_bio_app_download_link_not_blocked():
+    # Scope is 18+ only: an app link in a bio is not an adult signal.
+    assert _check_bio("Salom! yuklab oling: http://x.site/app.apk") is None
 
 
 _EXPLICIT_REASON = "profile bio links to explicit/adult content"
@@ -117,10 +113,6 @@ def test_clean_bio_passes():
 
 # --- check_bio (used by the first-message scan in spam_detector) ---------------
 
-def test_check_bio_flags_malware_link():
-    assert asyncio.run(pc.check_bio(_BioBot("get it: app.apk"), 1, None)) == _MALWARE_REASON
-
-
 def test_check_bio_flags_explicit_link():
     assert asyncio.run(pc.check_bio(_BioBot("🔞 t.me/xxx_channel"), 1, None)) == _EXPLICIT_REASON
 
@@ -135,15 +127,15 @@ def test_check_bio_no_bio_returns_none():
 
 # --- is_severe: which reasons trigger ban + delete vs soft mute -----------------
 
-def test_is_severe_true_for_nudity_malware_and_explicit_link():
+def test_is_severe_true_for_nudity_and_explicit_link():
     assert pc.is_severe("profile photo #2 flagged explicit (NudeNet)")
-    assert pc.is_severe(_MALWARE_REASON)
     assert pc.is_severe(_EXPLICIT_REASON)
 
 
-def test_is_severe_false_for_ambiguous_spam_and_none():
+def test_is_severe_false_for_soft_reasons_and_none():
     assert not pc.is_severe("profile photo ambiguous — needs admin review")
-    assert not pc.is_severe("profile bio looks like spam (advertisement)")
+    assert not pc.is_severe("profile bio flagged (adult)")
+    assert not pc.is_severe("profile bio links a downloadable app (likely malware)")
     assert not pc.is_severe(None)
 
 

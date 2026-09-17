@@ -24,36 +24,34 @@ _MAX_PROFILE_PHOTOS = 10
 
 
 def is_severe(reason) -> bool:
-    """Hard signals → ban + delete (priority over keyword mutes): a clearly-explicit
-    profile photo, an explicit-channel link, or a malware/APK link. A generic spammy
-    bio is NOT severe — it stays soft (mute + admin review). Ambiguous photos are no
-    longer flagged at all, so they never reach here."""
+    """Hard 18+ signals → ban + delete: a clearly-explicit profile photo or a bio
+    linking explicit content. Softer verdicts (the AI on a bio, an admin-taught
+    keyword) stay a 24h mute + admin review. Ambiguous photos are never flagged at
+    all, so they never reach here."""
     if not reason:
         return False
     return ("flagged explicit (NudeNet)" in reason
-            or reason == "profile bio links a downloadable app (likely malware)"
             or reason == "profile bio links to explicit/adult content")
 
 
 async def check_bio(bot, user_id, group_id=None) -> str | None:
     """Bio-only scan — one get_chat call, no photo downloads. The #1 escape tactic
-    is a clean first message with the payload in the bio. Only a downloadable-binary
-    link is a hard block; plain links and t.me/@channel info are often legit, so
-    those go to the keyword+AI classifier (AI only when the group has a BYOK key).
-    Cheap enough to run on a sender's first message, not just at join."""
+    is a clean first message with the 18+ payload in the bio. A link next to
+    explicit terms is a hard block. A bio that merely links the member's own
+    channel or site is normal: it goes to the AI, which judges only 18+ content and
+    runs only where AI is switched on and a key exists. Cheap enough to run on a
+    sender's first message, not just at join."""
     try:
         bio = (await bot.get_chat(user_id)).bio or ""
     except Exception:
         return None
     if not bio:
         return None
-    if patterns.has_malware_link(bio):
-        return "profile bio links a downloadable app (likely malware)"
     if patterns.has_explicit_link(bio):
         return "profile bio links to explicit/adult content"
     reason = classify_spam(bio, group_id=group_id)
     if reason:
-        return f"profile bio looks like spam ({reason})"
+        return f"profile bio flagged ({reason})"
     return None
 
 
@@ -104,7 +102,7 @@ async def on_join(message: Message) -> None:
         await block_user(message.bot, message.chat.id, user.id, reason,
                          user_type="bot" if severe else "human",
                          is_permanent=severe, ban=severe)
-        tail = ("⛔ Banned — profile flagged (nudity / explicit or malware link)."
+        tail = ("⛔ Banned — profile flagged (explicit photo or 18+ link)."
                 if severe else "⚠️ Muted 24h pending review — Ban or Unmute below.")
         await notify_group(message.bot, message.chat.id, (
             f"🚨 Suspicious profile on join\n"

@@ -31,7 +31,6 @@ _UZ_HELP = """🛡 Mendan qanday foydalanish kerak
 
 Men avtomatik ravishda nimalar qilaman:
 • Spam va istalmagan xabarlarni aniqlayman va o'chiraman — matnlarda ham, rasm tavsiflarida ham.
-• Muvofiqlashtirilgan spamni to'xtataman: bir xil xabar bir vaqtning o'zida bir nechta akkauntdan kelsa, barcha nusxalarni o'chiraman va ularni birgalikda bloklayman.
 • Yangi a'zolar qo'shilganda ularni tekshiraman — tarjimai holi (bio) va barcha profil rasmlarini — hamda guruhga qo'shilish so'rovlarini saralayman.
 • Spamerlarni avtomatik ravishda bloklayman (odamlarni 24 soatga, botlarni butunlay) va adminlarni xabardor qilaman; adminlar bu qarorni har doim bekor qilishlari mumkin.
 
@@ -62,7 +61,6 @@ _EN_HELP = """🛡 How to use me
 
 What I do automatically:
 • Detect and remove spam and unwanted messages — in text and in image captions.
-• Catch coordinated spam: when the same message comes from several accounts at once, I remove every copy and block them together.
 • Check new members when they join — their bio and all of their profile photos — and screen join requests.
 • Block spammers automatically (24 hours for people, permanently for bots) and notify admins, who can always override.
 
@@ -118,6 +116,7 @@ I store only what I need to moderate your group:
 • the text of messages I flag as spam (auto-deleted after 90 days),
 • IDs of blocked or flagged accounts and your group's settings,
 • if you add a Gemini key, it is encrypted at rest and used only to classify your own group's messages.
+• if your group has no key of its own, the bot operator may classify its messages with a shared Gemini key; those messages are then sent to Google Gemini for that check only.
 
 I never sell your data or share it outside your group's admins. Run /disable to stop moderation; contact the bot operator to remove your data."""
 
@@ -127,6 +126,7 @@ Guruhingizni moderatsiya qilish uchun faqat zarur bo'lgan ma'lumotlarni saqlayma
 • spam deb belgilangan xabarlar matni (90 kundan keyin avtomatik o'chiriladi),
 • bloklangan yoki belgilangan akkauntlar ID-lari va guruhingiz sozlamalari,
 • agar Gemini kalitini qo'shsangiz, u saqlash vaqtida shifrlanadi va faqat guruhingiz xabarlarini tasniflash uchun ishlatiladi.
+• agar guruhingizning o'z kaliti bo'lmasa, bot operatori xabarlarni umumiy Gemini kaliti bilan tasniflashi mumkin; bunda xabarlar faqat shu tekshiruv uchun Google Gemini'ga yuboriladi.
 
 Ma'lumotlaringizni hech qachon sotmayman va guruhingiz adminlaridan tashqari hech kimga ulashmayman. Moderatsiyani to'xtatish uchun /disable buyrug'ini bering; ma'lumotlaringizni o'chirish uchun bot operatoriga murojaat qiling."""
 PRIVACY_TEXT = _UZ_PRIVACY + _SEP + PRIVACY_EN

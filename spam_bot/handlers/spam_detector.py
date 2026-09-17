@@ -7,15 +7,14 @@ from aiogram import Router, F
 from aiogram.enums import ChatType
 from aiogram.types import ChatPermissions, Message
 
-from ..core import groups, keys, patterns, usage, watchlist
+from ..core import ai_settings, groups, keys, patterns, usage, watchlist
 from ..core.config import GEMINI_MODEL
 from ..core.prompts import SPAM_SYSTEM_INSTRUCTION
 from ..core.ratelimit import RateLimiter
 from ..db.session import SessionLocal
 from ..db.models import BlockedUser, SpamReport
 from .admin_notifier import (
-    announce_mute, notify_admins, notify_admins_burst, notify_admins_watched,
-    notify_operator_action,
+    announce_mute, notify_admins, notify_admins_watched, notify_operator_action,
 )
 
 # Import Gemini AI (optional — regex layer works without it).
@@ -32,9 +31,9 @@ _client_cache: dict = {}  # sha256(key) -> genai.Client
 
 
 def _get_gemini_client(group_id=None):
-    # Pure BYOK: a group's AI uses only its own stored key. No key -> no AI
-    # (regex layer still runs). No shared/operator fallback.
-    api_key = keys.get_key(group_id)
+    # A group's own BYOK key first; failing that, the operator's shared key
+    # (/globalkey). Neither -> no AI (regex layer still runs).
+    api_key, _source = keys.resolve_key(group_id)
     if not api_key or genai is None:
         return None
     import hashlib
@@ -68,7 +67,8 @@ def _record_usage(response, group_id) -> None:
 def _gemini_classify(text: str, client, group_id=None) -> str | None:
     """One Gemini call -> 'adult' | None. The AI layer now judges ONLY sexual/
     flirtatious content; ads/insults are handled elsewhere or allowed.
-    Records token usage (best-effort) against the group whose BYOK key paid."""
+    Records token usage (best-effort) against the group it ran for — whether its
+    own key or the operator's shared key paid, /tokens shows who consumed what."""
     try:
         response = client.models.generate_content(
             model=GEMINI_MODEL,
@@ -109,6 +109,10 @@ def _classify(text: str, key, group_id=None) -> tuple[str | None, str]:
     reason = patterns.classify(text, group_id)
     if reason:
         return reason, "regex"
+    # Operator switch (/ai). Checked before the budgets, so a switched-off group
+    # doesn't spend rate-limit slots it will never use.
+    if group_id is not None and not ai_settings.is_enabled(group_id):
+        return None, "skipped:ai-off"
     if key is not None and not _user_budget.allow(key):
         return None, "skipped:user-ratelimit"
     if not _global_budget.allow("global"):
@@ -131,7 +135,7 @@ def is_bot_account(message: Message) -> bool:
     """True only for actual Telegram bot accounts. A single flagged message now
     gives a human a recoverable 24h mute + admin alert, never an auto permanent
     ban — a false positive must be undoable. Permanent bans stay reserved for
-    severe profile hits (nudity/explicit-link/malware) and coordinated burst rings.
+    severe 18+ profile hits (an explicit photo or an explicit-link bio).
     ponytail: dropped the flirting-keyword + short-username heuristics; both
     permanently banned legitimate users on harmless messages."""
     return bool(message.from_user and message.from_user.is_bot)
@@ -163,8 +167,8 @@ async def block_user(bot, chat_id: int, user_id: int, reason: str,
                      user_type: str = "human", is_permanent: bool = False,
                      ban: bool = False) -> None:
     """Restrict a user (permanent or 24h) or hard-ban them, and log it. ban=True
-    kicks the account out of the group — used for severe profile hits (nudity,
-    explicit-channel or malware/APK links), which take priority over keyword mutes."""
+    kicks the account out of the group — used for severe 18+ profile hits (an
+    explicit photo or an explicit-link bio), which take priority over softer mutes."""
     try:
         expires_at = None if (is_permanent or ban) else datetime.now() + timedelta(hours=24)
         if ban:
@@ -193,72 +197,6 @@ async def block_user(bot, chat_id: int, user_id: int, reason: str,
         await notify_operator_action(bot, chat_id, user_id, label, reason, user_type)
     except Exception as e:
         logging.error(f"Failed to block user {user_id}: {e}")
-
-
-# --- Coordinated-spam burst detector -----------------------------------------
-# The same message blasted from many accounts at once. Each copy might dodge the
-# per-message classifier (novel text, Gemini rate-limited), but N identical copies
-# from N distinct senders is itself spam. In-memory, single-process — a burst
-# plays out in seconds, so losing state on restart is fine.
-# ponytail: exact normalized-text match; add fuzzy/shingle match only if spammers
-# start perturbing each copy.
-_BURST_WINDOW = 120.0    # seconds a copy stays "recent"
-_BURST_MIN_USERS = 3     # distinct senders of the same text -> coordinated
-_BURST_MIN_LEN = 12      # ignore short chatter ("+", "rahmat", "salom")
-_BURST_MAX_TEXTS = 200   # per-chat memory cap
-_burst: dict = {}        # chat_id -> {norm_text: {"hits": [(uid, mid, ts)], "flagged": bool}}
-
-
-def _record_burst(message: Message, norm_text: str) -> tuple[bool, list | None]:
-    """Record one message and decide if it's part of a coordinated burst.
-
-    Returns (is_spam, cohort):
-      (False, None)          not (yet) a burst
-      (True, [(uid, mid)..]) threshold just crossed — caller purges the whole cohort
-      (True, None)           burst already flagged — nuke this copy; cohort handled
-    """
-    if len(norm_text) < _BURST_MIN_LEN:
-        return False, None
-    now = time.monotonic()
-    chat = _burst.setdefault(message.chat.id, {})
-    rec = chat.get(norm_text) or {"hits": [], "flagged": False}
-    rec["hits"] = [h for h in rec["hits"] if now - h[2] < _BURST_WINDOW]
-    rec["hits"].append((message.from_user.id, message.message_id, now))
-    chat[norm_text] = rec
-
-    # Bound memory: drop the least-recently-touched texts.
-    if len(chat) > _BURST_MAX_TEXTS:
-        for k in sorted(chat, key=lambda k: chat[k]["hits"][-1][2])[: len(chat) - _BURST_MAX_TEXTS]:
-            del chat[k]
-
-    if rec["flagged"]:
-        return True, None
-    if len({h[0] for h in rec["hits"]}) >= _BURST_MIN_USERS:
-        rec["flagged"] = True
-        return True, [(h[0], h[1]) for h in rec["hits"]]
-    return False, None
-
-
-def _clear_burst_chat(chat_id: int) -> None:
-    """Reset a chat's burst state (used by tests)."""
-    _burst.pop(chat_id, None)
-
-
-async def _purge_cohort(bot, chat_id: int, cohort: list, reason: str) -> int:
-    """Delete every stored copy and permanently ban every distinct sender in a
-    burst cohort. Coordinated multi-account floods are bot rings -> permanent.
-    Returns the number of distinct accounts banned."""
-    banned = set()
-    for user_id, message_id in cohort:
-        try:
-            await bot.delete_message(chat_id, message_id)
-        except Exception as e:
-            logging.warning(f"burst: failed to delete {message_id}: {e}")
-        if user_id not in banned:
-            banned.add(user_id)
-            await block_user(bot, chat_id, user_id, reason,
-                             user_type="bot", is_permanent=True)
-    return len(banned)
 
 
 async def _report_spam(message: Message, reason: str) -> None:
@@ -314,7 +252,7 @@ async def handle_spam_detection(message: Message) -> None:
 
     # First message from this sender? Scan their full profile once (bio + photos).
     # This is the only place link-joiners get profile-checked (their join emitted
-    # no new_chat_members event). Nudity / explicit-channel / malware links are
+    # no new_chat_members event). Nudity / explicit-channel links are
     # hard-banned + deleted here, ahead of any keyword check.
     pkey = (message.chat.id, message.from_user.id)
     if pkey not in _profile_checked:
@@ -334,9 +272,6 @@ async def handle_spam_detection(message: Message) -> None:
 
     reason = classify_spam(text, key=(message.chat.id, message.from_user.id),
                            group_id=message.chat.id)
-    is_burst, cohort = _record_burst(message, patterns.normalize(text))
-    if is_burst and not reason:
-        reason = "coordinated spam: same message from multiple accounts"
     if not reason:
         # Message looks fine. But if an admin flagged this account as a suspicious
         # bot profile, surface it (never auto-act) — once an hour per chat/user.
@@ -346,20 +281,7 @@ async def handle_spam_detection(message: Message) -> None:
         return
 
     await _report_spam(message, reason)
-
-    if cohort is not None:
-        # Threshold just crossed: delete + ban the whole cohort (this message
-        # included) in one shot, so the admin doesn't chase 10 accounts by hand.
-        count = await _purge_cohort(message.bot, message.chat.id, cohort, reason)
-        await notify_admins_burst(message.bot, message, reason, count)
-        return
-
     await _delete_message_safe(message)
-    if is_burst:  # another copy of an already-flagged ring
-        await block_user(message.bot, message.chat.id, message.from_user.id,
-                         reason, "bot", is_permanent=True)
-        await notify_admins(message.bot, message, reason, "bot")
-        return
 
     is_bot = is_bot_account(message)
     user_type = "bot" if is_bot else "human"

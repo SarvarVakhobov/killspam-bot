@@ -36,16 +36,18 @@ def ban_counts(start_utc, end_utc) -> dict:
 
 
 def group_inventory() -> list:
-    """Every protected group: (chat_id, enabled_at, ai_on). ai_on = a Gemini key
-    is stored, i.e. AI moderation is active (else regex-only)."""
+    """Every protected group: (chat_id, enabled_at, ai_on). ai_on = the AI layer
+    actually runs for it: switched on (/ai) and a key resolves — its own or the
+    operator's shared key."""
     from ..db.session import SessionLocal
     from ..db.models import AllowedGroup
-    from . import keys
+    from . import ai_settings, keys
     try:
         with SessionLocal() as db:
             rows = db.query(AllowedGroup).all()
             groups = [(g.chat_id, g.enabled_at) for g in rows]
-        return [(cid, at, keys.has_key(cid)) for cid, at in groups]
+        return [(cid, at, ai_settings.is_enabled(cid) and keys.key_source(cid) is not None)
+                for cid, at in groups]
     except Exception as e:
         logging.error(f"stats.group_inventory failed: {e}")
         return []
@@ -58,6 +60,7 @@ def _label(chat_id, titles: dict) -> str:
 
 def report(titles: dict = None) -> str:
     """Operator stats DM: group roster + spam/ban activity per window."""
+    from . import ai_settings, keys
     titles = titles or {}
     inv = group_inventory()
 
@@ -67,7 +70,13 @@ def report(titles: dict = None) -> str:
         lines.append("\nGroups:")
         for cid, at, ai_on in sorted(inv, key=lambda r: (r[1] or usage.datetime.min)):
             since = at.strftime("%Y-%m-%d") if at else "?"
-            lines.append(f"  • {_label(cid, titles)} — since {since}, AI: {'on' if ai_on else 'off'}")
+            if ai_on:
+                ai = "on" if keys.has_key(cid) else "on (shared key)"
+            elif not ai_settings.is_enabled(cid):
+                ai = "off (switched off)"
+            else:
+                ai = "off (no key)"
+            lines.append(f"  • {_label(cid, titles)} — since {since}, AI: {ai}")
 
     windows = [
         ("Yesterday", usage.yesterday_bounds_utc(), True),

@@ -67,7 +67,7 @@ def test_soft_profile_message_deleted_not_banned(monkeypatch):
     bot = FakeBot()
     msg = _msg(bot)
     captured = {}
-    _setup(monkeypatch, "profile bio looks like spam (advertisement)", captured)
+    _setup(monkeypatch, "profile bio flagged (adult)", captured)
     asyncio.run(sd.handle_spam_detection(msg))
     assert (msg.chat.id, msg.message_id) in bot.deleted   # still deleted
     assert captured.get("ban") is False                   # but muted pending review, not banned

@@ -5,7 +5,7 @@ import logging
 from aiohttp import web
 
 from .core import crypto, keys, tokens
-from .core.config import GEMINI_MODEL
+from .core.config import ADMIN_TELEGRAM_IDS, GEMINI_MODEL
 from .core.ratelimit import RateLimiter
 
 try:
@@ -57,8 +57,12 @@ async def get_key(request: web.Request) -> web.Response:
                      "<h2>This link is invalid or has expired.</h2>"
                      "<p>Run /setkey in your group again for a fresh link.</p>")
     guide = "https://gemini.google.com/share/dbde5edfe69b"
+    shared = grant["chat_id"] == keys.GLOBAL_SCOPE
+    heading = "Set the shared AI key" if shared else "Enable AI moderation"
+    scope = ("<p><b>This key will be used by every protected group that has no key "
+             "of its own.</b></p>" if shared else "")
     body = (
-        f"<h2>Enable AI moderation</h2>"
+        f"<h2>{heading}</h2>{scope}"
         f"<p>Paste your Google Gemini API key below. "
         f"<a href='{guide}' target='_blank' rel='noopener noreferrer'>How to get a key</a>.</p>"
         f"<form method=post action='/key'>"
@@ -79,6 +83,11 @@ async def post_key(request: web.Request) -> web.Response:
         return _page("Link expired",
                      "<h2>This link is invalid or has expired.</h2>"
                      "<p>Run /setkey in your group again for a fresh link.</p>")
+    shared = grant["chat_id"] == keys.GLOBAL_SCOPE
+    # Defense in depth: only /globalkey (operator-gated) mints this scope, but the
+    # key every keyless group falls back to must never be writable by anyone else.
+    if shared and str(grant["created_by"]) not in ADMIN_TELEGRAM_IDS:
+        return _page("Not allowed", "<h2>This link can't set the shared key.</h2>")
     if not _post_limit.allow(tok):
         return _page("Slow down", "<h2>Too many attempts. Wait a minute and retry.</h2>")
     if not key:
@@ -93,6 +102,11 @@ async def post_key(request: web.Request) -> web.Response:
                      "<h2>Key storage isn't configured on this bot.</h2>"
                      "<p>Contact the bot operator.</p>")
     tokens.consume(tok)
+    if shared:
+        return _page("Done",
+                     "<h2>✅ Shared AI key saved.</h2>"
+                     "<p>Every protected group without its own key now uses it. "
+                     "You can close this page.</p>")
     return _page("Done",
                  "<h2>✅ AI moderation is on for your group.</h2>"
                  "<p>You can close this page.</p>")

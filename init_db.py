@@ -26,6 +26,7 @@ _ADD_COLUMNS = [
     ("feedback_reports", "target_name", "VARCHAR"),
     ("learned_patterns", "group_id", "BIGINT"),
     ("feedback_reports", "group_id", "BIGINT"),
+    ("group_config", "ai_enabled", "BOOLEAN"),
 ]
 
 

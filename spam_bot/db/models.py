@@ -87,6 +87,9 @@ class GroupConfig(Base):
     gemini_key_encrypted = Column(String)
     key_set_by = Column(BigInteger)
     key_set_at = Column(DateTime)
+    # Operator AI switch (/ai): True/False forces AI on/off for this group; NULL
+    # follows the default, stored on the keys.GLOBAL_SCOPE row (NULL there = on).
+    ai_enabled = Column(Boolean)
 
 
 class TokenUsage(Base):

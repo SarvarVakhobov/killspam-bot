@@ -2,20 +2,12 @@
 # Edit freely — reloaded on bot start and after every admin-taught addition.
 # Lines starting with # are comments. [section] headers group by category.
 #
-# SCOPE (v1.7.0): the bot focuses on explicit/nude/flirting content (judged by the
-# AI layer + profile scan) plus a SHORT list of high-signal spam links here. The old
-# broad keyword lists (Russian/Uzbek work/sale/discount words, insult words, and
-# "salom/qiz/sizga" flirting words) were removed — they flagged normal conversation
-# and blocked legitimate users. Do NOT re-add generic vocabulary here; teach narrow
-# per-group keywords at runtime instead, or let the AI layer judge intent in context.
+# SCOPE: the bot blocks ONLY 18+ content, judged by the AI layer, the local
+# NudeNet photo scan and the explicit-link bio check in core/patterns.py.
+# Nothing in this file blocks automatically any more. The [ads] rules that lived
+# here (private t.me/+ invite links, crypto-airdrop wording) muted real members
+# for listing their own channel in their bio, so they were removed. Do NOT add
+# non-adult rules back; a group admin can still teach a narrow keyword for their
+# own group with /teach.
 
 [ads]
-# Private invite links — almost never legitimate in a learning group.
-t\.me/\+\w
-t\.me/joinchat
-# Crypto airdrop / "free drop" / giveaway scams (usually English, often image captions).
-\bair\s*drops?\b
-\b(free|claim|open|grab)\b.{0,40}\b(drop|airdrop|giveaway|case|mint|reward|bonus)\b
-\b(case|loot|reward|crypto|token|nft)\s*drops?\b
-\b(solana|sol|ethereum|eth|bitcoin|btc|usdt|tron|trx|ton|bnb|doge)\b.{0,40}\b(drop|airdrop|giveaway|claim|free|bonus|reward)\b
-\bclaim\b.{0,20}\b(your|yours|now|reward|token|crypto|free)\b
