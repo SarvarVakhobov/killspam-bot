@@ -8,3 +8,5 @@ __pycache__
 !.env.example
 deploy
 *.md
+# release.py reads it to announce each new version
+!CHANGELOG.md
